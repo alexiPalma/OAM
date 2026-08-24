@@ -2,6 +2,7 @@
 
 try:
     import re
+    import sys
     import bot as _app
     from db import top_users, user, connect
     from config import FARMS
@@ -117,9 +118,6 @@ try:
 
     _app.callback = _callback
 
-    # When bot.py itself renders the dynamic earn screen, use an explicit
-    # Subscribe -> Check flow. run.py has its own screen but uses the same
-    # callback handler above.
     async def _fixed_earn(c):
         db = await connect()
         cur = await db.execute('SELECT id,kind,url,reward FROM earn_tasks WHERE active=1 ORDER BY id')
@@ -144,22 +142,35 @@ try:
 
     _app.earn = _fixed_earn
 
-    # run.py owns the real main-menu keyboard. Add Achievements there directly;
-    # the stable callback router already handles achievements/ach:/ach_claim:.
-    try:
-        import run as _run
-        _old_home_kb = getattr(_run, 'home_kb', None)
-        if _old_home_kb is not None and not getattr(_old_home_kb, '_achievements_menu_patch', False):
-            def _home_with_achievements(is_admin_user=False):
-                markup = _old_home_kb(is_admin_user)
-                rows = [list(row) for row in markup.inline_keyboard]
-                if not any(button.callback_data == 'achievements' for row in rows for button in row):
-                    insert_at = len(rows) - (1 if is_admin_user else 0)
-                    rows.insert(max(0, insert_at), [InlineKeyboardButton(text='🏆 Ачивки', callback_data='achievements')])
-                return InlineKeyboardMarkup(inline_keyboard=rows)
-            _home_with_achievements._achievements_menu_patch = True
-            _run.home_kb = _home_with_achievements
-    except Exception:
-        pass
+    def _patch_main_home(frame):
+        main_globals = frame.f_globals
+        old_home = main_globals.get('home_kb')
+        if old_home is None or getattr(old_home, '_achievements_menu_patch', False):
+            return False
+
+        def _home_with_achievements(is_admin_user=False):
+            markup = old_home(is_admin_user)
+            rows = [list(row) for row in markup.inline_keyboard]
+            if not any(button.callback_data == 'achievements' for row in rows for button in row):
+                insert_at = len(rows) - (1 if is_admin_user else 0)
+                rows.insert(max(0, insert_at), [InlineKeyboardButton(text='🏆 Ачивки', callback_data='achievements')])
+            return InlineKeyboardMarkup(inline_keyboard=rows)
+
+        _home_with_achievements._achievements_menu_patch = True
+        main_globals['home_kb'] = _home_with_achievements
+        return True
+
+    # run.py is executed as __main__, so importing it here patches a different
+    # module and does not affect the real running bot. Instead, watch only the
+    # run.py __main__ frame until its home_kb exists, then patch it once.
+    def _trace(frame, event, arg):
+        if event in ('line', 'return') and frame.f_globals.get('__name__') == '__main__':
+            filename = str(frame.f_globals.get('__file__', ''))
+            if filename.endswith('run.py') and _patch_main_home(frame):
+                sys.settrace(None)
+                return None
+        return _trace
+
+    sys.settrace(_trace)
 except Exception:
     pass
