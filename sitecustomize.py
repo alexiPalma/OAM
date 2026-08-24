@@ -13,8 +13,6 @@ try:
     # Legacy admin-edited templates sometimes contain the two literal
     # characters ``\\n`` instead of an actual newline. Normalise them before
     # formatting so Telegram renders real line breaks.
-    _original_tpl = _app.tpl
-
     async def _tpl(key, default, **kw):
         raw = await _app.setting('msg_' + key, default)
         if isinstance(raw, str):
@@ -86,6 +84,21 @@ try:
         )
 
     _app.farm = _fixed_farm
+
+    # run.py has its own home keyboard, so add the important Achievements entry
+    # there as well without replacing the existing menu.
+    import run as _run
+    _old_home_kb = _run.home_kb
+
+    def _home_with_achievements(is_admin_user=False):
+        markup = _old_home_kb(is_admin_user)
+        rows = [list(row) for row in markup.inline_keyboard]
+        if not any(button.callback_data == 'achievements' for row in rows for button in row):
+            insert_at = len(rows) - (1 if is_admin_user else 0)
+            rows.insert(max(0, insert_at), [_app.InlineKeyboardButton(text='🏆 Ачивки', callback_data='achievements')])
+        return _app.InlineKeyboardMarkup(inline_keyboard=rows)
+
+    _run.home_kb = _home_with_achievements
 except Exception:
     # Never prevent the bot from starting because of this compatibility layer.
     pass
