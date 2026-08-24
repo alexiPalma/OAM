@@ -119,7 +119,7 @@ async def case(c,cid):
     for unit,amount,chance in pool:
         acc+=chance
         if r<acc:break
-    db=await connect();cur=await db.execute(f'UPDATE users SET balance=balance-?,{unit}={unit}+? WHERE user_id=? AND balance>=?',(price,amount,c.from_user.id,price));await db.commit();await db.close()
+    col=unit;db=await connect();cur=await db.execute(f'UPDATE users SET balance=balance-?,{col}={col}+? WHERE user_id=? AND balance>=?',(price,amount,c.from_user.id,price));await db.commit();await db.close()
     if not cur.rowcount:return await c.answer('Недостаточно средств.',show_alert=True)
     await safe(c,f'📦 Кейс открыт!\n\n{UNITS[unit]["title"]} × {amount}\n🎲 Шанс: {chance}%',back('cases'))
 async def donate(c):
@@ -257,19 +257,17 @@ async def find_user(name):
     db=await connect();cur=await db.execute('SELECT * FROM users WHERE lower(username)=?',(name.lstrip('@').lower(),));r=await cur.fetchone();await db.close();return r
 async def text_handler(m,bot):
     text=(m.text or '').strip();p=text.split();cmd=p[0].split('@')[0].lower() if p else '';low=text.lower()
-    # Text shortcuts. They are intentionally handled before FSM input, except when a value is expected.
     if not text.startswith('/'):
-        if low=='a':return await army_from_message(m)
+        if low in ('a','армия'):return await army_from_message(m)
         if low=='ферма':return await farm_from_message(m)
         if low in ('б','баланс'):return await balance_from_message(m)
         if low=='донат':return await donate_from_message(m)
         if low=='шоп':return await shop_from_message(m)
         if low=='правила':return await rules_from_message(m)
         if low=='вызовы':return await attack_from_message(m)
-        if low in ('атака','атак'):return await attack_from_message(m)
+        if low=='атака':return await attack_from_message(m)
         if p and p[0].lower() in ('атака','атак') and len(p)>=2:return await attack_by_username(m,p[1])
-        if low.startswith('промокод ') or low.startswith('промо ') or low.startswith('promo '):
-            return await use_promo(m,p[1])
+        if low.startswith('промокод ') or low.startswith('промо ') or low.startswith('promo '):return await use_promo(m,p[1])
         if low in ('промо','промокод','promo'):STATE[m.from_user.id]=('promo',None);return await m.answer('🎟 Введите промокод:')
     if text.startswith('/'):
         if cmd in ('/promo','/промо','/промокод'):
@@ -321,7 +319,6 @@ async def rules_from_message(m): await m.answer(f'📕 {BRAND} • ПРАВИЛ�
 async def attack_from_message(m):
     await ensure_user(m.from_user.id,m.from_user.username);u=await user(m.from_user.id);left=cd_seconds(u)
     if left:return await m.answer(f'⚔️ {BRAND} • ВЫЗОВЫ\n\n⏳ Ваш КД: {left//60:02d}:{left%60:02d}')
-    # Reuse the same opponent-selection logic as the inline attack button.
     db=await connect();cur=await db.execute('SELECT * FROM users WHERE user_id!=? ORDER BY balance DESC',(m.from_user.id,));rows=await cur.fetchall();await db.close();players=[r for r in rows if not cd_seconds(r) and army_size(r)>0];out=[]
     for p in players[:10]:
         n='@'+p['username'] if p['username'] else f'ID {p["user_id"]}';out.append([(f'⚔️ {n} · {army_size(p)} ед.',f'opp:{p["user_id"]}')])
