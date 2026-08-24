@@ -7,7 +7,7 @@ from aiogram.filters import CommandStart
 
 import bot as app
 import achievements
-from config import BOT_TOKEN, OWNER_ID2, OWNER_IDS, ADMIN_ID, UNITS, UNIT_BY_ID
+from config import BOT_TOKEN, OWNER_ID2, OWNER_IDS, ADMIN_ID, UNITS
 from db import connect, init_db, is_admin, user
 from settings import init_settings
 
@@ -65,18 +65,13 @@ async def home_callback(c):
 
 
 async def tasks(c):
-    """Fixed quests are intentionally separate from dynamic earning tasks."""
     u = await user(c.from_user.id)
     db = await connect()
-    cur = await db.execute(
-        'SELECT quest_id FROM quest_claims WHERE user_id=?', (c.from_user.id,)
-    )
+    cur = await db.execute('SELECT quest_id FROM quest_claims WHERE user_id=?', (c.from_user.id,))
     claimed = {r['quest_id'] for r in await cur.fetchall()}
     await db.close()
-
     rows = []
-    quests = getattr(app, 'FIXED_QUESTS', [])
-    for qid, title, reward in quests:
+    for qid, title, reward in getattr(app, 'FIXED_QUESTS', []):
         if qid in claimed:
             rows.append([(f'☑️ {title} — получено', f'task_locked:{qid}')])
             continue
@@ -87,122 +82,112 @@ async def tasks(c):
             or (qid == 'buy_interceptor_50' and int(u['interceptor']) >= 50)
             or (qid == 'buy_bmp' and int(u['bmp']) >= 1)
         )
-        prefix = '✅' if done else '🔒'
-        rows.append([(f'{prefix} {title} · {reward}', f'quest:{qid}')])
+        rows.append([((('✅' if done else '🔒') + f' {title} · {reward}'), f'quest:{qid}')])
+    rows += [[('💰 К заработку', 'earn')], [('⬅️ Назад', 'home')]]
+    return await app.safe(c, f'📋 {app.BRAND} • ЗАДАНИЯ\n\nВыполняйте постоянные задания и забирайте награды.', app.kb(rows))
 
-    rows.append([('💰 К заработку', 'earn')])
-    rows.append([('⬅️ Назад', 'home')])
-    text = (
-        f"📋 {app.BRAND} • ЗАДАНИЯ\n\n"
-        "Выполняйте постоянные задания и забирайте награды.\n\n"
-        "🟢 — условие выполнено\n🔒 — ещё не выполнено"
-    )
-    return await app.safe(c, text, app.kb(rows))
+
+async def tasks_message(message):
+    await app.ensure_user(message.from_user.id, message.from_user.username)
+    u = await user(message.from_user.id)
+    db = await connect()
+    cur = await db.execute('SELECT quest_id FROM quest_claims WHERE user_id=?', (message.from_user.id,))
+    claimed = {r['quest_id'] for r in await cur.fetchall()}
+    await db.close()
+    rows = []
+    for qid, title, reward in getattr(app, 'FIXED_QUESTS', []):
+        if qid in claimed:
+            rows.append([(f'☑️ {title} — получено', f'task_locked:{qid}')])
+            continue
+        done = (
+            (qid == 'earn_any' and await app.earn_any_done(message.from_user.id))
+            or (qid == 'buy_soldier_10' and int(u['soldier']) >= 10)
+            or (qid == 'fight_once' and int(u['attacks_won']) + int(u['attacks_lost']) >= 1)
+            or (qid == 'buy_interceptor_50' and int(u['interceptor']) >= 50)
+            or (qid == 'buy_bmp' and int(u['bmp']) >= 1)
+        )
+        rows.append([((('✅' if done else '🔒') + f' {title} · {reward}'), f'quest:{qid}')])
+    rows += [[('💰 К заработку', 'earn')], [('⬅️ Назад', 'home')]]
+    return await message.answer(f'📋 {app.BRAND} • ЗАДАНИЯ\n\nВыполняйте постоянные задания и забирайте награды.', reply_markup=app.kb(rows))
 
 
 async def earn(c):
-    """Dynamic earning: subscriptions, groups and channel boosts."""
     db = await connect()
-    cur = await db.execute(
-        'SELECT id,kind,url,reward FROM earn_tasks WHERE active=1 ORDER BY id'
-    )
+    cur = await db.execute('SELECT id,kind,url,reward FROM earn_tasks WHERE active=1 ORDER BY id')
     dynamic = await cur.fetchall()
-    cur = await db.execute(
-        'SELECT task_id FROM earn_claims WHERE user_id=?', (c.from_user.id,)
-    )
+    cur = await db.execute('SELECT task_id FROM earn_claims WHERE user_id=?', (c.from_user.id,))
     claimed = {r['task_id'] for r in await cur.fetchall()}
     await db.close()
-
-    labels = {
-        'boost': '🚀 Буст канала / группы',
-        'channel': '📢 Подписка на канал',
-        'group': '👥 Вступление в группу',
-    }
+    labels = {'boost': '🚀 Буст канала / группы', 'channel': '📢 Подписка на канал', 'group': '👥 Вступление в группу'}
     rows = []
     for task in dynamic:
         label = labels.get(task['kind'], task['kind'])
         if task['id'] in claimed:
             rows.append([(f'☑️ {label} · награда получена', 'earn_done')])
-            continue
-        rows.append([(f'{label} · +${app.money(task["reward"])}', task['url'])])
-        rows.append([('✅ Проверить выполнение', f'earn_check:{task["kind"]}:{task["id"]}')])
-
-    if not dynamic:
-        body = 'Пока нет активных предложений.\n\nАдминистратор может добавить их через админ-панель.'
-    else:
-        body = 'Выберите действие, выполните его и нажмите «Проверить выполнение». '
-    rows.append([('📋 Задания', 'tasks')])
-    rows.append([('⬅️ Назад', 'home')])
+        else:
+            rows.append([(f'{label} · +${app.money(task["reward"])}', task['url'])])
+            rows.append([('✅ Проверить выполнение', f'earn_check:{task["kind"]}:{task["id"]}')])
+    body = ('Пока нет активных предложений.\n\nАдминистратор может добавить их через админ-панель.' if not dynamic else 'Выполните действие и нажмите «Проверить выполнение».')
+    rows += [[('📋 Задания', 'tasks')], [('⬅️ Назад', 'home')]]
     return await app.safe(c, f'💰 {app.BRAND} • ЗАРАБОТАТЬ\n\n{body}', app.kb(rows))
+
+
+async def earn_message(message):
+    db = await connect()
+    cur = await db.execute('SELECT id,kind,url,reward FROM earn_tasks WHERE active=1 ORDER BY id')
+    dynamic = await cur.fetchall()
+    await db.close()
+    labels = {'boost': '🚀 Буст канала / группы', 'channel': '📢 Подписка на канал', 'group': '👥 Вступление в группу'}
+    rows = []
+    for task in dynamic:
+        rows.append([(f'{labels.get(task["kind"], task["kind"])} · +${app.money(task["reward"])}', task['url'])])
+        rows.append([('✅ Проверить выполнение', f'earn_check:{task["kind"]}:{task["id"]}')])
+    text = '💰 ЗАРАБОТАТЬ\n\n' + ('Пока нет активных предложений.' if not dynamic else 'Выполните действие и нажмите «Проверить выполнение».')
+    rows += [[('📋 Задания', 'tasks')], [('⬅️ Назад', 'home')]]
+    return await message.answer(text, reply_markup=app.kb(rows))
 
 
 async def check_dynamic_earn(c, kind, task_id, tg_bot: Bot):
     db = await connect()
-    cur = await db.execute(
-        'SELECT * FROM earn_tasks WHERE id=? AND kind=? AND active=1',
-        (task_id, kind),
-    )
+    cur = await db.execute('SELECT * FROM earn_tasks WHERE id=? AND kind=? AND active=1', (task_id, kind))
     task = await cur.fetchone()
     if not task:
         await db.close()
         return await c.answer('Задание не найдено.', show_alert=True)
-    cur = await db.execute(
-        'SELECT 1 FROM earn_claims WHERE user_id=? AND task_id=?',
-        (c.from_user.id, task_id),
-    )
+    cur = await db.execute('SELECT 1 FROM earn_claims WHERE user_id=? AND task_id=?', (c.from_user.id, task_id))
     if await cur.fetchone():
         await db.close()
         return await c.answer('Награда уже получена.', show_alert=True)
     await db.close()
-
-    m = re.match(r'https?://t\.me/([A-Za-z0-9_]+)$', task['url'].rstrip('/'))
-    if not m:
+    match = re.match(r'https?://t\.me/([A-Za-z0-9_]+)$', task['url'].rstrip('/'))
+    if not match:
         return await c.answer('Нужна публичная ссылка Telegram вида https://t.me/channel.', show_alert=True)
-    username = '@' + m.group(1)
-
+    chat = '@' + match.group(1)
     ok = False
     if kind == 'boost':
-        # aiogram exposes this method on versions that support the Bot API
-        # getUserChatBoosts call. If the installed version does not expose it,
-        # fail cleanly instead of breaking the callback dispatcher.
         method = getattr(tg_bot, 'get_user_chat_boosts', None)
         if method is None:
-            return await c.answer(
-                'Для проверки буста нужна версия aiogram с getUserChatBoosts.',
-                show_alert=True,
-            )
+            return await c.answer('Для проверки буста нужна версия aiogram с getUserChatBoosts.', show_alert=True)
         try:
-            result = await method(chat_id=username, user_id=c.from_user.id)
-            boosts = getattr(result, 'boosts', None)
-            ok = bool(boosts)
+            result = await method(chat_id=chat, user_id=c.from_user.id)
+            ok = bool(getattr(result, 'boosts', None))
         except Exception:
             ok = False
     else:
         try:
-            member = await tg_bot.get_chat_member(username, c.from_user.id)
+            member = await tg_bot.get_chat_member(chat, c.from_user.id)
             ok = member.status not in ('left', 'kicked')
         except Exception:
             ok = False
-
     if not ok:
         return await c.answer('❌ Условие ещё не выполнено.', show_alert=True)
-
     db = await connect()
     try:
-        cur = await db.execute(
-            'SELECT 1 FROM earn_claims WHERE user_id=? AND task_id=?',
-            (c.from_user.id, task_id),
-        )
+        cur = await db.execute('SELECT 1 FROM earn_claims WHERE user_id=? AND task_id=?', (c.from_user.id, task_id))
         if await cur.fetchone():
             return await c.answer('Награда уже получена.', show_alert=True)
-        await db.execute(
-            'UPDATE users SET balance=balance+? WHERE user_id=?',
-            (task['reward'], c.from_user.id),
-        )
-        await db.execute(
-            'INSERT INTO earn_claims(user_id,task_id) VALUES(?,?)',
-            (c.from_user.id, task_id),
-        )
+        await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (task['reward'], c.from_user.id))
+        await db.execute('INSERT INTO earn_claims(user_id,task_id) VALUES(?,?)', (c.from_user.id, task_id))
         await db.commit()
     finally:
         await db.close()
@@ -212,46 +197,30 @@ async def check_dynamic_earn(c, kind, task_id, tg_bot: Bot):
 async def use_promo_extended(message, code):
     db = await connect()
     try:
-        cur = await db.execute(
-            'SELECT * FROM promos WHERE lower(code)=lower(?)', (code.strip(),)
-        )
+        cur = await db.execute('SELECT * FROM promos WHERE lower(code)=lower(?)', (code.strip(),))
         promo = await cur.fetchone()
         if not promo:
             return await message.answer('❌ Промокод не найден.')
         if int(promo['uses']) >= int(promo['max_uses']):
             return await message.answer('❌ Промокод больше недоступен.')
-        cur = await db.execute(
-            'SELECT 1 FROM promo_uses WHERE code=? AND user_id=?',
-            (promo['code'], message.from_user.id),
-        )
+        cur = await db.execute('SELECT 1 FROM promo_uses WHERE code=? AND user_id=?', (promo['code'], message.from_user.id))
         if await cur.fetchone():
             return await message.answer('❌ Вы уже использовали этот промокод.')
-
         reward_type = str(promo['reward_type'] or 'money')
         amount = int(promo['reward_amount'] or promo['amount'] or 0)
         if reward_type == 'money':
-            await db.execute(
-                'UPDATE users SET balance=balance+? WHERE user_id=?',
-                (amount, message.from_user.id),
-            )
+            await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (amount, message.from_user.id))
             reward_text = f'💵 +${app.money(amount)}'
         elif reward_type.startswith('unit:'):
             unit = reward_type.split(':', 1)[1]
             if unit not in UNITS or amount <= 0:
                 return await message.answer('❌ Промокод содержит некорректную технику.')
-            await db.execute(
-                f'UPDATE users SET {unit}={unit}+? WHERE user_id=?',
-                (amount, message.from_user.id),
-            )
+            await db.execute(f'UPDATE users SET {unit}={unit}+? WHERE user_id=?', (amount, message.from_user.id))
             reward_text = f'{UNITS[unit]["title"]} × {amount}'
         else:
             return await message.answer('❌ Неизвестный тип награды промокода.')
-
         await db.execute('UPDATE promos SET uses=uses+1 WHERE code=?', (promo['code'],))
-        await db.execute(
-            'INSERT INTO promo_uses(code,user_id) VALUES(?,?)',
-            (promo['code'], message.from_user.id),
-        )
+        await db.execute('INSERT INTO promo_uses(code,user_id) VALUES(?,?)', (promo['code'], message.from_user.id))
         await db.commit()
     finally:
         await db.close()
@@ -261,51 +230,29 @@ async def use_promo_extended(message, code):
 async def add_promo(message, parts):
     if not await admin_ok(message.from_user.id):
         return await message.answer('⛔ Нет доступа.')
-    # /addpromo CODE money 100000 10
-    # /addpromo CODE unit tank 5 10
-    if len(parts) == 5 and parts[1].lower() == 'money':
-        code, _, amount_s, max_s = parts[0], parts[1], parts[2], parts[3]
-    if len(parts) == 4:
-        # Backward-compatible money syntax: /addpromo CODE SUM MAX
-        code, amount_s, max_s = parts[0], parts[1], parts[2]
-        reward_type = 'money'
-    elif len(parts) == 5 and parts[1].lower() == 'money':
-        code, amount_s, max_s = parts[0], parts[2], parts[3]
-        reward_type = 'money'
-    elif len(parts) == 6 and parts[1].lower() in ('unit', 'tech', 'equipment'):
-        code, unit, amount_s, max_s = parts[0], parts[2].lower(), parts[3], parts[4]
+    reward_type = 'money'
+    if len(parts) == 3:
+        code, amount_s, max_s = parts
+    elif len(parts) == 4 and parts[1].lower() == 'money':
+        code, _, amount_s, max_s = parts
+    elif len(parts) == 5 and parts[1].lower() in ('unit', 'tech', 'equipment'):
+        code, _, unit, amount_s, max_s = parts
+        unit = unit.lower()
         if unit not in UNITS:
             return await message.answer('❌ Неизвестная техника. Доступно: ' + ', '.join(UNITS))
         reward_type = 'unit:' + unit
     else:
-        return await message.answer(
-            '❌ Формат:\n'
-            '/addpromo КОД СУММА ЛИМИТ\n'
-            '/addpromo КОД money СУММА ЛИМИТ\n'
-            '/addpromo КОД unit ТЕХНИКА КОЛИЧЕСТВО ЛИМИТ\n\n'
-            'Пример:\n/addpromo TANK2026 unit tank 2 100'
-        )
+        return await message.answer('❌ Формат:\n/addpromo КОД СУММА ЛИМИТ\n/addpromo КОД money СУММА ЛИМИТ\n/addpromo КОД unit ТЕХНИКА КОЛИЧЕСТВО ЛИМИТ\n\nПример:\n/addpromo TANK2026 unit tank 2 100')
     try:
-        amount = int(amount_s)
-        max_uses = int(max_s)
+        amount, max_uses = int(amount_s), int(max_s)
     except ValueError:
         return await message.answer('❌ Сумма, количество и лимит должны быть числами.')
     if not code or amount <= 0 or max_uses <= 0:
         return await message.answer('❌ Сумма/количество и лимит должны быть больше нуля.')
-
     db = await connect()
     try:
         money_amount = amount if reward_type == 'money' else 0
-        await db.execute(
-            '''INSERT INTO promos(code,amount,uses,max_uses,reward_type,reward_amount)
-               VALUES(?,?,0,?,?,?)
-               ON CONFLICT(code) DO UPDATE SET
-                 amount=excluded.amount,
-                 max_uses=excluded.max_uses,
-                 reward_type=excluded.reward_type,
-                 reward_amount=excluded.reward_amount''',
-            (code, money_amount, max_uses, reward_type, amount),
-        )
+        await db.execute('''INSERT INTO promos(code,amount,uses,max_uses,reward_type,reward_amount) VALUES(?,?,0,?,?,?) ON CONFLICT(code) DO UPDATE SET amount=excluded.amount,max_uses=excluded.max_uses,reward_type=excluded.reward_type,reward_amount=excluded.reward_amount''', (code, money_amount, max_uses, reward_type, amount))
         await db.commit()
     finally:
         await db.close()
@@ -328,10 +275,7 @@ async def take_unit(message, parts):
         return await message.answer('❌ Неверные данные.')
     db = await connect()
     try:
-        cur = await db.execute(
-            f'UPDATE users SET {unit}=MAX(0,{unit}-?) WHERE user_id=?',
-            (amount, target['user_id']),
-        )
+        cur = await db.execute(f'UPDATE users SET {unit}=MAX(0,{unit}-?) WHERE user_id=?', (amount, target['user_id']))
         await db.commit()
     finally:
         await db.close()
@@ -354,10 +298,7 @@ async def take_cash(message, parts):
         return await message.answer('❌ Неверные данные.')
     db = await connect()
     try:
-        cur = await db.execute(
-            'UPDATE users SET balance=MAX(0,balance-?) WHERE user_id=?',
-            (amount, target['user_id']),
-        )
+        cur = await db.execute('UPDATE users SET balance=MAX(0,balance-?) WHERE user_id=?', (amount, target['user_id']))
         await db.commit()
     finally:
         await db.close()
@@ -369,27 +310,12 @@ async def take_cash(message, parts):
 async def take_menu(c):
     if not await admin_ok(c.from_user.id):
         return await c.answer('⛔ Нет доступа.', show_alert=True)
-    text = (
-        '➖ ВЫДАТЬ / СПИСАТЬ\n\n'
-        '💵 /givecash @username сумма\n'
-        '💵 /takecash @username сумма\n\n'
-        '🎖 /givepehot @username ID количество\n'
-        '➖ /takeunit @username тип количество\n\n'
-        'Типы: ' + ', '.join(UNITS.keys())
-    )
+    text = '➖ ВЫДАТЬ / СПИСАТЬ\n\n💵 /givecash @username сумма\n💵 /takecash @username сумма\n\n🎖 /givepehot @username ID количество\n➖ /takeunit @username тип количество\n\nТипы: ' + ', '.join(UNITS.keys())
     return await app.safe(c, text, app.back('admin'))
 
 
 async def admin_promos(c):
-    text = (
-        '🎟 ПРОМОКОДЫ\n\n'
-        '/addpromo КОД СУММА ЛИМИТ\n'
-        '/addpromo КОД money СУММА ЛИМИТ\n'
-        '/addpromo КОД unit ТЕХНИКА КОЛИЧЕСТВО ЛИМИТ\n\n'
-        'Пример:\n'
-        '/addpromo TANK2026 unit tank 2 100\n\n'
-        'Техника: ' + ', '.join(UNITS.keys())
-    )
+    text = '🎟 ПРОМОКОДЫ\n\n/addpromo КОД СУММА ЛИМИТ\n/addpromo КОД money СУММА ЛИМИТ\n/addpromo КОД unit ТЕХНИКА КОЛИЧЕСТВО ЛИМИТ\n\nПример:\n/addpromo TANK2026 unit tank 2 100\n\nТехника: ' + ', '.join(UNITS.keys())
     return await app.safe(c, text, app.back('admin'))
 
 
@@ -399,7 +325,7 @@ async def callback(c, bot: Bot):
         return await home_callback(c)
     if data == 'tasks':
         return await tasks(c)
-    if data == 'task_locked:' or data.startswith('task_locked:'):
+    if data.startswith('task_locked:'):
         return await c.answer('Это задание уже получено.', show_alert=True)
     if data == 'earn':
         return await earn(c)
@@ -426,14 +352,10 @@ async def text_handler(message, bot: Bot):
     parts = text.split()
     command = parts[0].split('@')[0].lower() if parts else ''
     low = text.lower()
-
     if low in ('адм', 'админ', '/адм', '/админ', '/admin', '/adm'):
         if not await admin_ok(message.from_user.id):
             return await message.answer('⛔ Нет доступа.')
-        return await message.answer(
-            f'⚙️ {app.BRAND} • АДМИН-ПАНЕЛЬ\n\nВыберите раздел:',
-            reply_markup=app.admin_kb(),
-        )
+        return await message.answer(f'⚙️ {app.BRAND} • АДМИН-ПАНЕЛЬ\n\nВыберите раздел:', reply_markup=app.admin_kb())
     if command == '/takeunit':
         return await take_unit(message, parts[1:])
     if command == '/takecash':
@@ -441,66 +363,16 @@ async def text_handler(message, bot: Bot):
     if command == '/addpromo':
         return await add_promo(message, parts[1:])
     if low in ('задания', 'задание', '/задания', '/задание'):
-        # Send a fresh message so this also works outside inline callbacks.
-        await tasks_message(message)
-        return
+        return await tasks_message(message)
     if low in ('заработать', '/заработать'):
-        await earn_message(message)
-        return
-    if low in ('промо', 'промокод', '/промо', '/промокод', '/promo') and len(parts) == 1:
-        return await message.answer('🎟 Введите промокод:')
+        return await earn_message(message)
     if command in ('/promo', '/промо', '/промокод') and len(parts) >= 2:
         return await use_promo_extended(message, parts[1])
+    if low in ('промо', 'промокод', '/промо', '/промокод', '/promo'):
+        return await message.answer('🎟 Введите промокод:')
     if not text.startswith('/') and (low.startswith('промокод ') or low.startswith('промо ')):
         return await use_promo_extended(message, parts[1])
     return await app.text_handler(message, bot)
-
-
-async def tasks_message(message):
-    u = await user(message.from_user.id)
-    if not u:
-        await app.ensure_user(message.from_user.id, message.from_user.username)
-        u = await user(message.from_user.id)
-    db = await connect()
-    cur = await db.execute('SELECT quest_id FROM quest_claims WHERE user_id=?', (message.from_user.id,))
-    claimed = {r['quest_id'] for r in await cur.fetchall()}
-    await db.close()
-    rows = []
-    for qid, title, reward in getattr(app, 'FIXED_QUESTS', []):
-        if qid in claimed:
-            rows.append([(f'☑️ {title} — получено', f'task_locked:{qid}')])
-            continue
-        done = (
-            (qid == 'earn_any' and await app.earn_any_done(message.from_user.id))
-            or (qid == 'buy_soldier_10' and int(u['soldier']) >= 10)
-            or (qid == 'fight_once' and int(u['attacks_won']) + int(u['attacks_lost']) >= 1)
-            or (qid == 'buy_interceptor_50' and int(u['interceptor']) >= 50)
-            or (qid == 'buy_bmp' and int(u['bmp']) >= 1)
-        )
-        rows.append([((('✅' if done else '🔒') + f' {title} · {reward}'), f'quest:{qid}')])
-    rows += [[('💰 К заработку', 'earn')], [('⬅️ Назад', 'home')]]
-    return await message.answer(
-        f'📋 {app.BRAND} • ЗАДАНИЯ\n\nВыполняйте постоянные задания и забирайте награды.',
-        reply_markup=app.kb(rows),
-    )
-
-
-async def earn_message(message):
-    db = await connect()
-    cur = await db.execute('SELECT id,kind,url,reward FROM earn_tasks WHERE active=1 ORDER BY id')
-    dynamic = await cur.fetchall()
-    await db.close()
-    labels = {'boost': '🚀 Буст канала / группы', 'channel': '📢 Подписка на канал', 'group': '👥 Вступление в группу'}
-    rows = []
-    for x in dynamic:
-        rows.append([(f'{labels.get(x["kind"], x["kind"])} · +${app.money(x["reward"])}', x['url'])])
-        rows.append([('✅ Проверить выполнение', f'earn_check:{x["kind"]}:{x["id"]}')])
-    if not dynamic:
-        text = '💰 ЗАРАБОТАТЬ\n\nПока нет активных предложений.'
-    else:
-        text = '💰 ЗАРАБОТАТЬ\n\nВыполните действие и нажмите «Проверить выполнение». '
-    rows += [[('📋 Задания', 'tasks')], [('⬅️ Назад', 'home')]]
-    return await message.answer(text, reply_markup=app.kb(rows))
 
 
 async def start_wrapper(message):
@@ -522,7 +394,6 @@ async def main():
         await db.close()
     await achievements.init_achievements()
     achievements.install_sync()
-
     tg = Bot(BOT_TOKEN)
     dp = Dispatcher()
     dp.message.register(start_wrapper, CommandStart())
