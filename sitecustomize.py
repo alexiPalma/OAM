@@ -143,5 +143,23 @@ try:
         return await _app.safe(c, f'💰 {_app.BRAND} • ЗАРАБОТАТЬ\n\n{body}', _app.kb(rows))
 
     _app.earn = _fixed_earn
+
+    # run.py owns the real main-menu keyboard. Add Achievements there directly;
+    # the stable callback router already handles achievements/ach:/ach_claim:.
+    try:
+        import run as _run
+        _old_home_kb = getattr(_run, 'home_kb', None)
+        if _old_home_kb is not None and not getattr(_old_home_kb, '_achievements_menu_patch', False):
+            def _home_with_achievements(is_admin_user=False):
+                markup = _old_home_kb(is_admin_user)
+                rows = [list(row) for row in markup.inline_keyboard]
+                if not any(button.callback_data == 'achievements' for row in rows for button in row):
+                    insert_at = len(rows) - (1 if is_admin_user else 0)
+                    rows.insert(max(0, insert_at), [InlineKeyboardButton(text='🏆 Ачивки', callback_data='achievements')])
+                return InlineKeyboardMarkup(inline_keyboard=rows)
+            _home_with_achievements._achievements_menu_patch = True
+            _run.home_kb = _home_with_achievements
+    except Exception:
+        pass
 except Exception:
     pass
