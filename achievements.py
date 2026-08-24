@@ -1,10 +1,11 @@
+import inspect
+
 import bot as app
 from db import connect, user
 from config import UNITS
-from aiogram import F
 
-# Requirements are ordered exactly as:
-# soldiers / UAVs / tanks / BMP / helicopters / planes / missiles / interceptors.
+
+# soldiers / UAVs / tanks / BMP / helicopters / planes / missiles / interceptors
 ACHIEVEMENTS = [
     ('recruit', '🪖 Рекрут', (100, 50, 15, 20, 1, 0, 0, 200), [('money', 50000)]),
     ('soldier', '🎖 Солдат', (200, 75, 20, 30, 2, 0, 0, 300), [('money', 100), ('money', 100000)]),
@@ -38,42 +39,45 @@ REWARD_NAMES = {
     'legend_prefix': '👑 префикс «Легенда»',
 }
 
+
 async def init_achievements():
     db = await connect()
-    await db.execute('''CREATE TABLE IF NOT EXISTS achievements(
-        user_id INTEGER,
-        achievement_id TEXT,
-        completed INTEGER NOT NULL DEFAULT 0,
-        claimed INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY(user_id, achievement_id)
-    )''')
-    await db.execute('''CREATE TABLE IF NOT EXISTS achievement_inventory(
-        user_id INTEGER PRIMARY KEY,
-        case1 INTEGER NOT NULL DEFAULT 0,
-        case2 INTEGER NOT NULL DEFAULT 0,
-        donate_case INTEGER NOT NULL DEFAULT 0,
-        legend_prefix INTEGER NOT NULL DEFAULT 0
-    )''')
-    await db.commit()
-    await db.close()
+    try:
+        await db.execute('''CREATE TABLE IF NOT EXISTS achievements(
+            user_id INTEGER,
+            achievement_id TEXT,
+            completed INTEGER NOT NULL DEFAULT 0,
+            claimed INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(user_id, achievement_id)
+        )''')
+        await db.execute('''CREATE TABLE IF NOT EXISTS achievement_inventory(
+            user_id INTEGER PRIMARY KEY,
+            case1 INTEGER NOT NULL DEFAULT 0,
+            case2 INTEGER NOT NULL DEFAULT 0,
+            donate_case INTEGER NOT NULL DEFAULT 0,
+            legend_prefix INTEGER NOT NULL DEFAULT 0
+        )''')
+        await db.commit()
+    finally:
+        await db.close()
 
 
 def reward_text(rewards):
-    out = []
-    for typ, amount in rewards:
-        if typ == 'money':
-            out.append(f'💵 ${int(amount):,}'.replace(',', ' '))
+    result = []
+    for kind, amount in rewards:
+        amount = int(amount)
+        if kind == 'money':
+            result.append(f'💵 ${amount:,}'.replace(',', ' '))
         else:
-            out.append(f'{REWARD_NAMES.get(typ, typ)} × {int(amount):,}'.replace(',', ' '))
-    return '\n'.join(out)
+            result.append(f'{REWARD_NAMES.get(kind, kind)} × {amount:,}'.replace(',', ' '))
+    return '\n'.join(result)
 
 
-def met(row, req):
-    return all(int(row[key]) >= needed for key, needed in zip(REQ_KEYS, req))
+def met(row, requirements):
+    return all(int(row[key]) >= needed for key, needed in zip(REQ_KEYS, requirements))
 
 
 async def check(uid, bot=None, notify=True):
-    """Mark newly completed achievements and optionally notify the user once."""
     row = await user(uid)
     if not row:
         return []
@@ -108,7 +112,7 @@ async def check(uid, bot=None, notify=True):
                 await bot.send_message(
                     uid,
                     f'🏆 Вы выполнили ачивку «{title}»!\n\n'
-                    f'🎁 Заберите вашу награду в разделе «Ачивки».',
+                    '🎁 Заберите вашу награду в разделе «Ачивки».',
                 )
             except Exception:
                 pass
@@ -162,6 +166,9 @@ async def detail(c, aid):
         await db.close()
 
     row = await user(c.from_user.id)
+    if not row:
+        return await c.answer('Пользователь не найден.', show_alert=True)
+
     completed = bool(state and int(state['completed']))
     claimed = bool(state and int(state['claimed']))
     requirement_text = '\n'.join(
@@ -267,35 +274,33 @@ async def claim(c, aid):
 
 
 def install_sync():
-    """Install achievement UI without replacing the main bot callback handler."""
+    """Integrate achievements with whichever launcher calls this function."""
     if getattr(app, '_achievements_installed', False):
         return
     app._achievements_installed = True
 
-    # Add the button to the existing main menu.
-    old_home = app.home_kb
-    def home_with_achievements(is_admin=False):
-        markup = old_home(is_admin)
-        rows = [list(row) for row in markup.inline_keyboard]
-        insert_at = max(0, len(rows) - 1)
-        rows.insert(insert_at, [app.InlineKeyboardButton(text='🏆 Ачивки', callback_data='achievements')])
-        return app.InlineKeyboardMarkup(inline_keyboard=rows)
-    app.home_kb = home_with_achievements
+    # The current project has its own run.py home_kb(). The old implementation
+    # patched bot.py's home_kb(), which meant the visible menu never changed.
+    # Patch the caller's function instead, without replacing the callback router.
+    frame = inspect.currentframe()
+    caller = frame.f_back if frame else None
+    namespace = caller.f_globals if caller else None
+    old_home = namespace.get('home_kb') if namespace else None
 
-    # Register a dedicated observer; never replace app.callback itself.
-    target = getattr(app, 'dp', None)
-    if target is not None and hasattr(target, 'callback_query'):
-        async def achievement_callback(c):
-            data = c.data or ''
-            if data == 'achievements':
-                return await menu(c)
-            if data.startswith('ach:'):
-                return await detail(c, data.split(':', 1)[1])
-            if data.startswith('ach_claim:'):
-                return await claim(c, data.split(':', 1)[1])
-        target.callback_query.register(achievement_callback, F.data.startswith('ach'))
+    if old_home is not None and not getattr(old_home, '_achievement_wrapper', False):
+        def home_with_achievements(is_admin_user=False):
+            markup = old_home(is_admin_user)
+            rows = [list(row) for row in markup.inline_keyboard]
+            # Put achievements above the final help row / admin row.
+            insert_at = max(0, len(rows) - (2 if is_admin_user else 1))
+            rows.insert(insert_at, [app.InlineKeyboardButton(text='🏆 Ачивки', callback_data='achievements')])
+            return app.InlineKeyboardMarkup(inline_keyboard=rows)
 
-    # Check after common reward-producing operations.
+        home_with_achievements._achievement_wrapper = True
+        namespace['home_kb'] = home_with_achievements
+
+    # Reward-producing actions are checked after completion so the user gets
+    # the achievement notification without replacing the main callback router.
     for name in ('buy_confirm', 'daily'):
         original = getattr(app, name, None)
         if original is None or getattr(original, '_achievement_wrapper', False):
@@ -313,7 +318,6 @@ def install_sync():
         wrapped._achievement_wrapper = True
         setattr(app, name, wrapped)
 
-    # Also check after any callback that uses the bot's common safe() renderer.
     original_safe = getattr(app, 'safe', None)
     if original_safe is not None and not getattr(original_safe, '_achievement_wrapper', False):
         async def safe_with_achievement_check(*args, **kwargs):
@@ -324,5 +328,6 @@ def install_sync():
             except Exception:
                 pass
             return result
+
         safe_with_achievement_check._achievement_wrapper = True
         app.safe = safe_with_achievement_check
