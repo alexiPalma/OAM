@@ -20,15 +20,11 @@ async def init_db():
     base = {'username':"TEXT NOT NULL DEFAULT ''",'balance':'INTEGER NOT NULL DEFAULT 0','farm_level':'INTEGER NOT NULL DEFAULT 0','tax':'INTEGER NOT NULL DEFAULT 0','last_payout':"TEXT NOT NULL DEFAULT ''",'daily_claim':"TEXT NOT NULL DEFAULT ''",'sub_claim':'INTEGER NOT NULL DEFAULT 0','last_attack':"TEXT NOT NULL DEFAULT ''",'attacks_won':'INTEGER NOT NULL DEFAULT 0','attacks_lost':'INTEGER NOT NULL DEFAULT 0'}
     for k,v in {**{x:'INTEGER NOT NULL DEFAULT 0' for x in UNITS},**{f'kill_{x}':'INTEGER NOT NULL DEFAULT 0' for x in UNITS},**base}.items():
         if k not in existing: await db.execute(f'ALTER TABLE users ADD COLUMN {k} {v}')
-
-    # Remove only the legacy development trigger that produced the exact
-    # "invalid user state" error on /start. It is no longer used by the app.
     cur = await db.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name='users'")
     for name, sql in await cur.fetchall():
         if sql and 'invalid user state' in sql.lower():
             safe_name = name.replace('"', '""')
             await db.execute(f'DROP TRIGGER IF EXISTS "{safe_name}"')
-
     tables=[
         'CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)',
         'CREATE TABLE IF NOT EXISTS admins(user_id INTEGER PRIMARY KEY)',
@@ -45,8 +41,7 @@ async def init_db():
     await db.commit(); await db.close()
 
 async def ensure_user(uid, username=''):
-    db = await connect()
-    stamp = datetime.now(timezone.utc).isoformat()
+    db = await connect(); stamp = datetime.now(timezone.utc).isoformat()
     try:
         cur = await db.execute('SELECT user_id FROM users WHERE user_id=?', (uid,))
         exists = await cur.fetchone()
@@ -68,7 +63,10 @@ async def is_admin(uid,owner_id):
     if uid==owner_id:return True
     db=await connect(); cur=await db.execute('SELECT 1 FROM admins WHERE user_id=?',(uid,)); row=await cur.fetchone(); await db.close(); return bool(row)
 async def top_users(limit=50):
-    db=await connect(); cur=await db.execute('SELECT user_id,username,balance,farm_level FROM users ORDER BY balance DESC LIMIT ?',(max(1,min(50,int(limit))),)); rows=await cur.fetchall(); await db.close(); return rows
+    db=await connect()
+    total=' + '.join(f'COALESCE({k},0)' for k in UNITS if k!='artillery')
+    cur=await db.execute(f'SELECT user_id,username,balance,farm_level,{total} AS army_total FROM users ORDER BY army_total DESC, attacks_won DESC LIMIT ?',(max(1,min(50,int(limit))),))
+    rows=await cur.fetchall(); await db.close(); return rows
 async def all_user_ids():
     db=await connect(); cur=await db.execute('SELECT user_id FROM users'); rows=await cur.fetchall(); await db.close(); return [x[0] for x in rows]
 async def users_count():
