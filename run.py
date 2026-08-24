@@ -1,4 +1,8 @@
-from bot import main
 import asyncio
+import bot
+from battle_patch import install
+
+install(bot)
+
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(bot.main())
