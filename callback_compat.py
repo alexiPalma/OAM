@@ -1,22 +1,23 @@
-"""Compatibility layer for aiogram 3 callback handlers.
+"""Final callback adapter for aiogram 3.
 
-The project historically used callbacks with (callback, bot), while
-Dispatcher supplies the CallbackQuery event itself. This adapter keeps the
-existing legacy handlers working without exposing a second positional
-argument to aiogram.
+The project has several callback layers (runtime, hotfixes, battles and
+achievements). aiogram invokes a callback handler with one CallbackQuery
+argument. This adapter keeps that public signature while forwarding every
+non-achievement callback to the complete callback chain installed before it.
 """
 import bot as app
 import achievements
-import runtime_fix
 
 
 def install():
+    # Capture the callback that exists after all runtime/hotfix layers have
+    # been installed. Do not call runtime_fix.callback directly here: that
+    # would bypass later hotfix layers (notably battle callbacks).
+    previous_callback = app.callback
+
     async def callback(c):
         data = c.data or ""
 
-        # Achievement callbacks are handled here because bot.main() creates
-        # its Dispatcher locally, so achievements cannot register directly on
-        # that dispatcher during module initialization.
         if data == "achievements":
             return await achievements.menu(c)
         if data.startswith("ach:"):
@@ -24,8 +25,8 @@ def install():
         if data.startswith("ach_claim:"):
             return await achievements.claim(c, data.split(":", 1)[1])
 
-        # runtime_fix.callback is the active project callback handler and
-        # expects the legacy second argument. Supply it explicitly here.
-        return await runtime_fix.callback(c, c.bot)
+        # Preserve the complete callback chain installed by runtime_fix and
+        # later hotfix/battle layers.
+        return await previous_callback(c, c.bot)
 
     app.callback = callback
