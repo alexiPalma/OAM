@@ -28,7 +28,7 @@ async def init_db():
     tables=[
         'CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)',
         'CREATE TABLE IF NOT EXISTS admins(user_id INTEGER PRIMARY KEY)',
-        'CREATE TABLE IF NOT EXISTS promos(code TEXT PRIMARY KEY,amount INTEGER NOT NULL DEFAULT 0,uses INTEGER NOT NULL DEFAULT 0,max_uses INTEGER NOT NULL DEFAULT 1)',
+        'CREATE TABLE IF NOT EXISTS promos(code TEXT PRIMARY KEY,amount INTEGER NOT NULL DEFAULT 0,uses INTEGER NOT NULL DEFAULT 0,max_uses INTEGER NOT NULL DEFAULT 1,reward_type TEXT NOT NULL DEFAULT "money",reward_amount INTEGER NOT NULL DEFAULT 0)',
         'CREATE TABLE IF NOT EXISTS promo_uses(code TEXT,user_id INTEGER,PRIMARY KEY(code,user_id))',
         'CREATE TABLE IF NOT EXISTS cases(id TEXT PRIMARY KEY,title TEXT NOT NULL,price INTEGER NOT NULL,stars INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 1)',
         'CREATE TABLE IF NOT EXISTS case_prizes(case_id TEXT,unit TEXT,amount INTEGER,weight REAL)',
@@ -38,6 +38,11 @@ async def init_db():
         'CREATE TABLE IF NOT EXISTS earn_claims(user_id INTEGER,task_id INTEGER,PRIMARY KEY(user_id,task_id))',
         'CREATE TABLE IF NOT EXISTS quest_claims(user_id INTEGER,quest_id TEXT,PRIMARY KEY(user_id,quest_id))']
     for sql in tables: await db.execute(sql)
+    cur = await db.execute('PRAGMA table_info(promos)')
+    promo_cols={r[1] for r in await cur.fetchall()}
+    if 'reward_type' not in promo_cols: await db.execute('ALTER TABLE promos ADD COLUMN reward_type TEXT NOT NULL DEFAULT "money"')
+    if 'reward_amount' not in promo_cols: await db.execute('ALTER TABLE promos ADD COLUMN reward_amount INTEGER NOT NULL DEFAULT 0')
+    await db.execute('UPDATE promos SET reward_amount=amount WHERE reward_type="money" AND reward_amount=0')
     await db.commit(); await db.close()
 
 async def ensure_user(uid, username=''):
@@ -45,13 +50,10 @@ async def ensure_user(uid, username=''):
     try:
         cur = await db.execute('SELECT user_id FROM users WHERE user_id=?', (uid,))
         exists = await cur.fetchone()
-        if exists:
-            await db.execute('UPDATE users SET username=? WHERE user_id=?', (username or '', uid))
-        else:
-            await db.execute('INSERT INTO users(user_id,username,last_payout,farm_level) VALUES(?,?,?,0)', (uid, username or '', stamp))
+        if exists: await db.execute('UPDATE users SET username=? WHERE user_id=?', (username or '', uid))
+        else: await db.execute('INSERT INTO users(user_id,username,last_payout,farm_level) VALUES(?,?,?,0)', (uid, username or '', stamp))
         await db.commit()
-    finally:
-        await db.close()
+    finally: await db.close()
 
 async def user(uid):
     db=await connect(); cur=await db.execute('SELECT * FROM users WHERE user_id=?',(uid,)); row=await cur.fetchone(); await db.close(); return row
@@ -63,10 +65,7 @@ async def is_admin(uid,owner_id):
     if uid==owner_id:return True
     db=await connect(); cur=await db.execute('SELECT 1 FROM admins WHERE user_id=?',(uid,)); row=await cur.fetchone(); await db.close(); return bool(row)
 async def top_users(limit=50):
-    db=await connect()
-    total=' + '.join(f'COALESCE({k},0)' for k in UNITS if k!='artillery')
-    cur=await db.execute(f'SELECT user_id,username,balance,farm_level,{total} AS army_total FROM users ORDER BY army_total DESC, attacks_won DESC LIMIT ?',(max(1,min(50,int(limit))),))
-    rows=await cur.fetchall(); await db.close(); return rows
+    db=await connect(); total=' + '.join(f'COALESCE({k},0)' for k in UNITS if k!='artillery');cur=await db.execute(f'SELECT user_id,username,balance,farm_level,{total} AS army_total FROM users ORDER BY army_total DESC, attacks_won DESC LIMIT ?',(max(1,min(50,int(limit))),));rows=await cur.fetchall();await db.close();return rows
 async def all_user_ids():
     db=await connect(); cur=await db.execute('SELECT user_id FROM users'); rows=await cur.fetchall(); await db.close(); return [x[0] for x in rows]
 async def users_count():
