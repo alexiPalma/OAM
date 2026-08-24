@@ -1,12 +1,11 @@
-"""Final callback dispatcher for WorldWarDynasty.
+"""Final aiogram callback dispatcher.
 
-Do not chain through app.callback: compatibility layers replace that attribute
-and doing so can recurse forever. Route achievement/admin callbacks explicitly,
-then call the installed hotfix callback object directly for everything else.
+The important rule here is: never call app.callback from inside the final
+callback. run.py freezes the runtime callback before wrappers are installed,
+so this dispatcher always has a stable non-recursive target.
 """
 import bot as app
 import achievements
-import hotfix_2026_08_24 as hotfix
 from config import OWNER_ID, OWNER_ID2, OWNER_IDS, ADMIN_ID, UNITS
 from db import connect, is_admin
 
@@ -27,20 +26,22 @@ async def _admin_ok(uid):
 async def _admin_panel(c):
     if not await _admin_ok(c.from_user.id):
         return await c.answer('⛔ Нет доступа.', show_alert=True)
-    return await app.safe(
-        c,
-        '⚙️ WorldWarDynasty • АДМИН-ПАНЕЛЬ\n\nВыберите раздел. Все действия доступны только владельцам/админам.',
-        app.admin_kb(),
-    )
+    return await app.safe(c, '⚙️ WorldWarDynasty • АДМИН-ПАНЕЛЬ\n\nВыберите раздел.', app.admin_kb())
 
 
 async def _admin_section(c, data):
     if not await _admin_ok(c.from_user.id):
         return await c.answer('⛔ Нет доступа.', show_alert=True)
+    # admin_section is installed by the runtime layer. If a project version
+    # does not expose it, fall back to the stable runtime callback instead of
+    # displaying a fake "section opened" message.
     fn = getattr(app, 'admin_section', None)
-    if fn is None:
-        return await c.answer('Раздел недоступен.', show_alert=True)
-    return await fn(c, data)
+    if fn is not None:
+        return await fn(c, data)
+    runtime = getattr(app, '_runtime_callback', None)
+    if runtime is not None:
+        return await runtime(c, c.bot)
+    return await c.answer('Раздел недоступен.', show_alert=True)
 
 
 async def _takeunit(m, parts):
@@ -60,10 +61,7 @@ async def _takeunit(m, parts):
         return await m.answer('❌ Неверная техника или количество.\nДоступно: ' + ', '.join(UNITS.keys()))
     db = await connect()
     try:
-        cur = await db.execute(
-            f'UPDATE users SET {unit}=MAX(0,{unit}-?) WHERE user_id=?',
-            (amount, target['user_id']),
-        )
+        cur = await db.execute(f'UPDATE users SET {unit}=MAX(0,{unit}-?) WHERE user_id=?', (amount, target['user_id']))
         await db.commit()
     finally:
         await db.close()
@@ -72,10 +70,17 @@ async def _takeunit(m, parts):
     return await m.answer(f'✅ Списано: {amount} × {UNITS[unit]["title"]} у @{target["username"] or target["user_id"]}.')
 
 
-def _real_callback():
-    # This is the module-level function installed by hotfix_2026_08_24.
-    # Calling it directly avoids the self-reference created by app.callback.
-    return getattr(hotfix, 'callback', None) or getattr(app, '_original_callback', None)
+async def _takeunit_menu(c):
+    if not await _admin_ok(c.from_user.id):
+        return await c.answer('⛔ Нет доступа.', show_alert=True)
+    text = (
+        '➖ Списать технику\n\n'
+        'Команда:\n'
+        '/takeunit @username тип количество\n\n'
+        'Типы:\n' + ', '.join(UNITS.keys()) +
+        '\n\nПример:\n/takeunit @player soldier 100'
+    )
+    return await app.safe(c, text, app.back('admin'))
 
 
 async def _dispatch(c):
@@ -88,17 +93,21 @@ async def _dispatch(c):
         return await achievements.claim(c, data.split(':', 1)[1])
     if data == 'admin':
         return await _admin_panel(c)
+    if data == 'a_takeunit':
+        return await _takeunit_menu(c)
     if data.startswith('a_'):
         return await _admin_section(c, data)
 
-    fn = _real_callback()
-    if fn is None:
+    # Every ordinary callback is sent to the frozen runtime handler. It is
+    # the handler that existed before this final wrapper, so 'home' and all
+    # other back buttons cannot recurse into this function.
+    runtime = getattr(app, '_runtime_callback', None)
+    if runtime is None:
         return await c.answer('Callback handler недоступен.', show_alert=True)
-    return await fn(c, c.bot)
+    return await runtime(c, c.bot)
 
 
 def install():
-    # Exactly one final wrapper; it never invokes app.callback.
     app.callback = _dispatch
     previous_text = getattr(app, 'text_handler', None)
 
@@ -108,10 +117,7 @@ def install():
         low = text.lower()
         if low in ('адм', 'админ', '/адм', '/админ', '/admin', '/adm'):
             if await _admin_ok(m.from_user.id):
-                return await m.answer(
-                    '⚙️ WorldWarDynasty • АДМИН-ПАНЕЛЬ\n\nВыберите раздел.',
-                    reply_markup=app.admin_kb(),
-                )
+                return await m.answer('⚙️ WorldWarDynasty • АДМИН-ПАНЕЛЬ\n\nВыберите раздел.', reply_markup=app.admin_kb())
             return await m.answer('⛔ Нет доступа.')
         if parts and parts[0].split('@')[0].lower() == '/takeunit':
             return await _takeunit(m, parts[1:])
