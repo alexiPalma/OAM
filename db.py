@@ -38,6 +38,18 @@ async def init_db():
         'CREATE TABLE IF NOT EXISTS earn_claims(user_id INTEGER,task_id INTEGER,PRIMARY KEY(user_id,task_id))',
         'CREATE TABLE IF NOT EXISTS quest_claims(user_id INTEGER,quest_id TEXT,PRIMARY KEY(user_id,quest_id))']
     for sql in tables: await db.execute(sql)
+
+    # Migrate the old earn_claims schema that used (user_id, channel_id).
+    # The current earn system needs (user_id, task_id). Keep the legacy table
+    # as a backup instead of deleting any old data.
+    cur = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='earn_claims'")
+    if await cur.fetchone():
+        cur = await db.execute('PRAGMA table_info(earn_claims)')
+        earn_cols = {r[1] for r in await cur.fetchall()}
+        if 'task_id' not in earn_cols:
+            await db.execute('ALTER TABLE earn_claims RENAME TO earn_claims_legacy')
+            await db.execute('CREATE TABLE earn_claims(user_id INTEGER,task_id INTEGER,PRIMARY KEY(user_id,task_id))')
+
     cur = await db.execute('PRAGMA table_info(promos)')
     promo_cols={r[1] for r in await cur.fetchall()}
     if 'reward_type' not in promo_cols: await db.execute('ALTER TABLE promos ADD COLUMN reward_type TEXT NOT NULL DEFAULT "money"')
