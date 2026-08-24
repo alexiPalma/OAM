@@ -2,7 +2,10 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 BOT_TOKEN=os.getenv('BOT_TOKEN','')
+# Two owner slots.
 OWNER_ID=int(os.getenv('OWNER_ID') or os.getenv('ADMIN_ID') or '0')
+OWNER_ID2=int(os.getenv('OWNER_ID2') or '0')
+OWNER_IDS=tuple(x for x in (OWNER_ID, OWNER_ID2) if x)
 ADMIN_ID=OWNER_ID
 DB_PATH=os.getenv('DB_PATH','voennabot.db')
 # Farm starts at level 0. First upgrade costs 500,000.
@@ -10,3 +13,16 @@ FARMS={0:{'income':0,'upgrade':500_000},1:{'income':15_000,'upgrade':500_000},2:
 UNITS={'soldier':{'id':1,'title':'🪖 Пехота','price':20_000,'loss':1_000},'interceptor':{'id':2,'title':'🎯 Дрон-перехватчик','price':4_000,'loss':4_000},'drone':{'id':3,'title':'🛩 БПЛА','price':120_000,'loss':20_000},'bmp':{'id':4,'title':'🚙 БМП','price':1_000_000,'loss':55_000},'tank':{'id':5,'title':'🛡 Танк','price':3_000_000,'loss':100_000},'helicopter':{'id':6,'title':'🚁 Вертолёт','price':4_000_000,'loss':100_000},'plane':{'id':7,'title':'✈️ Самолёт','price':6_000_000,'loss':500_000},'missile':{'id':8,'title':'🚀 Ракета','price':20_000_000,'loss':1_000_000},'artillery':{'id':9,'title':'💥 Артиллерия','price':0,'loss':250_000}}
 UNIT_BY_ID={v['id']:k for k,v in UNITS.items()}
 DONATIONS={50:5_000_000,100:11_000_000,500:100_000_000}
+
+# Daily bonus probabilities, ordered from highest to lowest.
+DAILY_BONUS_PRIZES=[
+    (50.0,'money',100_000,'$100 000'),
+    (20.0,'interceptor',10,'10 перехватчиков'),
+    (10.0,'drone',2,'2 БПЛА'),
+    (5.0,'bmp',1,'БМП'),
+    (5.0,'drone',10,'10 БПЛА'),
+    (4.9,'interceptor',50,'50 перехватчиков'),
+    (2.5,'tank',1,'танк'),
+    (2.5,'money',300_000,'$300 000'),
+    (0.1,'helicopter',1,'вертолёт'),
+]
