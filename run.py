@@ -1,6 +1,6 @@
 import asyncio
 import bot
-from battle_patch import install
+from battle_runtime import install
 
 install(bot)
 
