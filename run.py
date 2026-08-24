@@ -6,8 +6,12 @@ import achievements
 import achievement_priority
 import callback_compat
 
-# Install deterministic layers before starting polling.
+# Install the base runtime layer first.
 runtime_fix.install()
+# Freeze this layer before later wrappers replace bot.callback. The final
+# dispatcher uses this stable reference and can therefore never call itself.
+bot._runtime_callback = bot.callback
+
 hotfix_2026_08_24.install()
 
 async def _install_achievements():
@@ -17,8 +21,5 @@ async def _install_achievements():
 
 if __name__ == '__main__':
     asyncio.run(_install_achievements())
-    # aiogram 3 supplies only CallbackQuery to callback handlers. The
-    # compatibility layer adapts the legacy two-argument handlers and also
-    # routes achievement callbacks safely.
     callback_compat.install()
     asyncio.run(bot.main())
