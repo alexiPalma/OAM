@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
       - name: Restore bot.py from known-good revision
         run: |
-          git checkout 155ebb9c6a44fa12cf59c61c8da5fc2514fbdd8d -- bot.py
+          git checkout 155ebb9c6a44fa12cf59eb6c5fb33675e4b1e1b4 -- bot.py
           python - <<'PY'
           from pathlib import Path
           p = Path('bot.py')
