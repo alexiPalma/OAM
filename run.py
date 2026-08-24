@@ -7,6 +7,7 @@ compatibility handlers for achievements and admin deductions.
 """
 import asyncio
 
+from aiogram import Bot
 import bot as app
 import achievements
 from config import OWNER_ID, OWNER_ID2, OWNER_IDS, ADMIN_ID, UNITS
@@ -96,7 +97,7 @@ ORIGINAL_CALLBACK = app.callback
 ORIGINAL_TEXT = app.text_handler
 
 
-async def callback(c, tg_bot):
+async def callback(c, tg_bot: Bot):
     data = c.data or ""
     if data == "achievements":
         return await achievements.menu(c)
@@ -109,7 +110,7 @@ async def callback(c, tg_bot):
     return await ORIGINAL_CALLBACK(c, tg_bot)
 
 
-async def text_handler(message, tg_bot):
+async def text_handler(message, tg_bot: Bot):
     text = (message.text or "").strip()
     low = text.lower()
     parts = text.split()
