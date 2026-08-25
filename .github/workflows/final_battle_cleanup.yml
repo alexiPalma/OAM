@@ -1,0 +1,44 @@
+name: Final battle cleanup
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  fix:
+    if: "!contains(github.event.head_commit.message, 'Final battle cleanup applied')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('bot.py'); s=p.read_text(encoding='utf-8')
+          s=s.replace("players=[r for r in rows if not cd_seconds(r) and army_size(r)>0]", "players=[r for r in rows if army_size(r)>0]", 1)
+          s=s.replace("n='@'+p['username'] if p['username'] else f'ID {p[\"user_id\"]}';out.append([(f'⚔️ {n} · {army_size(p)} ед.',f'opp:{p[\"user_id\"]}')])", "n='@'+p['username'] if p['username'] else f'ID {p[\"user_id\"]}';status='✅ ГОТОВ' if cd_seconds(p)<=0 else f'⏳ КД {cd_text(p)}';out.append([(f'⚔️ {n} · {army_size(p)} ед. · {status}',f'opp:{p[\"user_id\"]}')])", 1)
+          old="attacker_id=int(attacker_id);defender_id=c.from_user.id\n    if INVITES.get(attacker_id)!=defender_id:return await c.answer('Приглашение уже недействительно.',show_alert=True)\n    INVITES.pop(attacker_id,None);me=await user(attacker_id);opp=await user(defender_id)"
+          new="attacker_id=int(attacker_id);defender_id=c.from_user.id\n    if INVITES.get(attacker_id)!=defender_id:return await c.answer('Приглашение уже недействительно.',show_alert=True)\n    me=await user(attacker_id);opp=await user(defender_id)"
+          if old not in s: raise SystemExit('battle_accept start block not found')
+          s=s.replace(old,new,1)
+          old="if not me or not opp or cd_seconds(me) or cd_seconds(opp):return await c.answer('Бой уже недоступен.',show_alert=True)\n    await c.message.edit_text('⚔️ БОЙ НАЧИНАЕТСЯ...')"
+          new="if not me or not opp or cd_seconds(me) or cd_seconds(opp):return await c.answer('Бой уже недоступен.',show_alert=True)\n    INVITES.pop(attacker_id,None)\n    await c.message.edit_text('⚔️ БОЙ НАЧИНАЕТСЯ...')"
+          if old not in s: raise SystemExit('battle_accept validation block not found')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+          python -m py_compile bot.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot.py
+          git commit -m 'Final battle cleanup applied'
+          git push origin HEAD:main
+      - name: Remove workflow
+        if: always()
+        run: |
+          rm -f .github/workflows/final_battle_cleanup.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Remove final battle cleanup workflow' || true
+          git push origin HEAD:main || true
