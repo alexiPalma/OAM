@@ -1,0 +1,97 @@
+import asyncio, contextvars
+import run
+import bot as app
+from config import UNITS
+from db import connect, top_users
+
+OWNER=contextvars.ContextVar('menu_owner',default=None)
+CODES={1:'soldier',2:'interceptor',3:'drone',4:'bmp',5:'tank',6:'helicopter',7:'plane',8:'missile',9:'artillery'}
+WEIGHTS={'soldier':1,'interceptor':1,'drone':3,'bmp':7,'artillery':8,'tank':10,'helicopter':15,'plane':25,'missile':50}
+CASES=('case1','case2','donate_case')
+
+def cb(x):
+    uid=OWNER.get()
+    return x if uid is None or x.startswith(('accept:','decline:')) else f'g{uid}:{x}'
+
+def kb(rows):
+    from aiogram.types import InlineKeyboardButton,InlineKeyboardMarkup
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=a,callback_data=cb(b)) for a,b in row] for row in rows])
+app.kb=kb
+
+async def shop(c):
+    rows=[];text=[]
+    for k in ('soldier','interceptor','drone','bmp','artillery','tank','helicopter','plane','missile'):
+        v=UNITS[k];text.append(f'{v["title"]} — ${app.money(v["price"])}');rows.append([(f'{v["title"]} — ${app.money(v["price"])}',f'buyq:{k}')])
+    rows.append([('⬅️ Назад','home')]);return await app.safe(c,'🛒 АРСЕНАЛ\n\n'+'\n'.join(text),kb(rows))
+
+async def buyq(c,k):
+    if k not in UNITS:return await c.answer('Недоступно',show_alert=True)
+    app.STATE[c.from_user.id]=('buy',k);return await app.safe(c,f'🛒 {UNITS[k]["title"]}\n\nЦена: ${app.money(UNITS[k]["price"])}\n\nВведите количество:',app.back('shop'))
+
+async def top(c):
+    rows=await top_users(50);out=[]
+    for i,r in enumerate(rows,1):
+        medal=('🥇','🥈','🥉')[i-1] if i<=3 else '🎖️';name='@'+r['username'] if r['username'] else f'ID {r["user_id"]}'
+        out.append(f'{medal} {i}. {name} — 🎖 {int(r["army_total"])}')
+    return await app.safe(c,'🏆 ТОП ВОЯК\n\n'+('\n'.join(out) or 'Пока игроков нет.')+'\n\nРейтинг: солдат 1 | перехватчик 1 | БПЛА 3 | БМП 7 | артиллерия 8 | танк 10 | вертолёт 15 | самолёт 25 | ракета 50',app.back())
+
+async def help_cmd(m):
+    return await m.answer('ℹ️ ПОМОЩЬ\n\nхелп / help — помощь\nбонус / bonus — бонус\nармия / а — армия\nшоп — магазин\nатака / вызовы — бой\nпромо — промокод\nачивки — достижения\nтоп — рейтинг')
+
+async def codes(m):
+    if not await run.admin_ok(m.from_user.id):return await m.answer('⛔ Нет доступа.')
+    names=['','солдат','перехватчик','БПЛА','БМП','танк','вертолёт','самолёт','ракета','артиллерия']
+    return await m.answer('КОДЫ ТЕХНИКИ\n\n'+'\n'.join(f'{i} — {names[i]}' for i in range(1,10))+'\n\nПример: /givepehot @username 9 2\n\nПромо-кейсы: case1, case2, donate_case')
+
+async def give(m,p):
+    if not await run.admin_ok(m.from_user.id):return await m.answer('⛔ Нет доступа.')
+    if len(p)!=3:return await m.answer('Формат: /givepehot @username КОД КОЛИЧЕСТВО\nИспользуй /коды')
+    u=await app.find_user(p[0])
+    try:code,n=int(p[1]),int(p[2])
+    except ValueError:return await m.answer('Неверный код/количество')
+    if not u or code not in CODES or n<=0:return await m.answer('Неверные данные. /коды')
+    unit=CODES[code];db=await connect();await db.execute(f'UPDATE users SET {unit}={unit}+? WHERE user_id=?',(n,u['user_id']));await db.commit();await db.close()
+    return await m.answer(f'✅ {UNITS[unit]["title"]} × {n} выдано.')
+
+async def addpromo(m,p):
+    if not await run.admin_ok(m.from_user.id):return await m.answer('⛔ Нет доступа.')
+    if len(p)==3: code,amount,limit=p;rtype='money'
+    elif len(p)==5 and p[1].lower()=='unit': code,_,unit,amount,limit=p;rtype='unit:'+unit.lower()
+    elif len(p)==5 and p[1].lower()=='case': code,_,case,amount,limit=p;rtype='case:'+case.lower()
+    else:return await m.answer('/addpromo КОД СУММА ЛИМИТ\n/addpromo КОД unit ТЕХНИКА КОЛИЧЕСТВО ЛИМИТ\n/addpromo КОД case КЕЙС КОЛИЧЕСТВО ЛИМИТ\nКейсы: case1, case2, donate_case')
+    try:a,l=int(amount),int(limit)
+    except ValueError:return await m.answer('Количество и лимит должны быть числами')
+    if a<=0 or l<=0:return await m.answer('Количество и лимит должны быть больше нуля')
+    if rtype.startswith('unit:') and rtype[5:] not in UNITS:return await m.answer('Неизвестная техника')
+    if rtype.startswith('case:') and rtype[5:] not in CASES:return await m.answer('Кейс: case1, case2, donate_case')
+    db=await connect();await db.execute('INSERT INTO promos(code,amount,uses,max_uses,reward_type,reward_amount) VALUES(?,?,0,?,?,?) ON CONFLICT(code) DO UPDATE SET amount=excluded.amount,max_uses=excluded.max_uses,reward_type=excluded.reward_type,reward_amount=excluded.reward_amount',(code,a if rtype=='money' else 0,l,rtype,a));await db.commit();await db.close();return await m.answer('✅ Промокод создан: '+code)
+
+orig_cb=run.callback;orig_text=run.text_handler
+app.shop=shop;app.buyq=buyq;app.top=top
+
+async def callback(c,b):
+    d=c.data or ''
+    if c.message and c.message.chat.type!='private':
+        if d.startswith('g') and ':' in d:
+            uid,real=d[1:].split(':',1)
+            if int(uid)!=c.from_user.id and not real.startswith(('accept:','decline:')):return await c.answer('⛔ Это меню принадлежит другому пользователю.',show_alert=True)
+            d=real;c.data=d
+        elif not d.startswith(('accept:','decline:')):return await c.answer('⛔ Это меню нельзя использовать другому пользователю.',show_alert=True)
+    if d=='shop':return await shop(c)
+    if d.startswith('buyq:'):return await buyq(c,d[5:])
+    if d=='top':return await top(c)
+    token=OWNER.set(c.from_user.id if c.message and c.message.chat.type!='private' else None)
+    try:return await orig_cb(c,b)
+    finally:OWNER.reset(token)
+
+async def text(m,b):
+    p=(m.text or '').strip().split();cmd=p[0].split('@')[0].lower() if p else '';low=(m.text or '').strip().lower()
+    if low in ('хелп','help','/help','/хелп'):return await help_cmd(m)
+    if low in ('бонус','bonus','/bonus','/бонус'):return await app.bonus(type('C',(),{'message':m,'from_user':m.from_user,'data':'bonus','answer':(lambda *a,**k:None)})())
+    if cmd in ('/коды','/codes','коды','codes'):return await codes(m)
+    if cmd=='/givepehot':return await give(m,p[1:])
+    if cmd=='/addpromo':return await addpromo(m,p[1:])
+    return await orig_text(m,b)
+run.callback=callback;run.text_handler=text
+
+if __name__=='__main__':asyncio.run(run.main())
