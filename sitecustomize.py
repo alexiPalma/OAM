@@ -1,8 +1,8 @@
 """WorldWarDynasty final runtime bootstrap.
 
-run.py is executed as __main__. The old patcher was installed as an import
-hook and therefore did not patch __main__. This bootstrap activates the same
-real fixes immediately before the bot's event loop starts.
+This module is loaded by Python before the launcher. It patches the active bot
+regardless of whether the launcher is run as run.py, working_launcher.py, or
+another local/Pterodactyl entrypoint.
 """
 import asyncio
 import functools
@@ -17,19 +17,17 @@ def _finalize():
         import bot as app
         import battle_rules_patch
         main = sys.modules.get('__main__')
-        if main is None or not str(getattr(main, '__file__', '')).endswith('run.py'):
+        if main is None:
             return
 
         # Activate the real battle implementation before the dispatcher starts.
         # This replaces bot.battle_accept, which the callback already calls.
         battle_rules_patch.install(app)
 
-        # config._patch_run expects a `case` symbol in run.py, but the real
-        # implementation lives in bot.py. Supplying that alias makes the
-        # existing patcher execute instead of silently returning False.
+        # config._patch_run contains the existing compatibility patches. Run it
+        # for the actual launcher, not only for a module literally named run.py.
         if not hasattr(main, 'case') and hasattr(app, 'case'):
             main.case = app.case
-
         patcher = getattr(config, '_patch_run', None)
         if patcher:
             patcher(main)
@@ -44,9 +42,6 @@ def _finalize():
 def _install_achievement_guard():
     try:
         import achievements
-        # The main achievements module now derives artillery requirements from
-        # the BMP requirement. Keep the compatibility guard aligned with the
-        # nine counters, including kill_artillery.
         achievements.REQ_KEYS = (
             'kill_soldier', 'kill_drone', 'kill_tank', 'kill_bmp',
             'kill_artillery', 'kill_helicopter', 'kill_plane', 'kill_missile',
