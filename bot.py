@@ -163,7 +163,7 @@ async def earn_check(c,kind,tid,bot):
 async def attack(c,page=0):
     me=await user(c.from_user.id);left=cd_seconds(me)
     if left:return await safe(c,f'⚔️ {BRAND} • АТАКА\n\n⏳ КД: {left//60:02d}:{left%60:02d}',back())
-    db=await connect();cur=await db.execute('SELECT * FROM users WHERE user_id!=? ORDER BY balance DESC',(c.from_user.id,));allrows=await cur.fetchall();await db.close();players=[r for r in allrows if army_size(r)>0 and r['user_id'] not in INVITES.values()];per=10;pages=max(1,(len(players)+per-1)//per);page=max(0,min(page,pages-1));items=players[page*per:(page+1)*per];rows=[]
+    db=await connect();cur=await db.execute('SELECT * FROM users WHERE user_id!=? ORDER BY balance DESC',(c.from_user.id,));allrows=await cur.fetchall();await db.close();players=[r for r in allrows if army_size(r)>0];per=10;pages=max(1,(len(players)+per-1)//per);page=max(0,min(page,pages-1));items=players[page*per:(page+1)*per];rows=[]
     for p in items:
         n='@'+p['username'] if p['username'] else f'ID {p["user_id"]}';status='✅ ГОТОВ' if cd_seconds(p)<=0 else f'⏳ КД {cd_text(p)}';rows.append([(f'⚔️ {n} · {army_size(p)} ед. · {status}',f'opp:{p["user_id"]}')])
     if not items:rows.append([('🔄 Обновить','attack')])
@@ -177,10 +177,11 @@ async def opponent(c,uid):
     if not opp or uid==c.from_user.id:return await c.answer('Игрок недоступен.',show_alert=True)
     if cd_seconds(me):return await c.answer('Ваш бой ещё на КД.',show_alert=True)
     if army_size(opp)<=0:return await c.answer('Этот игрок сейчас недоступен.',show_alert=True)
-    PENDING[c.from_user.id]=uid;n='@'+opp['username'] if opp['username'] else f'ID {uid}';await safe(c,await tpl('opponent',f'🎯 {BRAND} • ПРОТИВНИК\n\n👤 {n}\n\n{army_text(opp)}',username=n,army=army_text(opp)),kb([[('⚔️ НАПАСТЬ','battle_confirm')],[('⬅️ Назад','attack')]]))
+    PENDING[c.from_user.id]=uid;n='@'+opp['username'] if opp['username'] else f'ID {uid}';status='✅ К атаке доступен' if cd_seconds(opp)<=0 else f'⏳ Противник на КД: {cd_text(opp)}';await safe(c,await tpl('opponent',f'🎯 {BRAND} • ПРОТИВНИК\n\n👤 {n}\n\n{army_text(opp)}\n\n{status}',username=n,army=army_text(opp)),kb([[('⚔️ НАПАСТЬ','battle_confirm')],[('⬅️ Назад','attack')]]))
 BATTLE_LINES=['⚔️ Идёт бой','💥 Гремят взрывы','🪖 Пехота зачищает посадки','🔥 Раздаются выстрелы','🌫 Над полем боя поднимается дым','⚡ Ударная волна проходит по позиции','🪖 Подразделения продвигаются вперёд','💥 На линии фронта новый взрыв','🏴 Позиции сторон меняются','⚔️ Бой продолжается']
 async def battle_confirm(c,bot):
     uid=PENDING.get(c.from_user.id,None)
+    if c.from_user.id in INVITES:return await c.answer('⏳ У вас уже есть ожидающий запрос на бой.',show_alert=True)
     if not uid:return await c.answer('Сначала выберите противника.',show_alert=True)
     me=await user(c.from_user.id);opp=await user(uid)
     if not opp or army_size(opp)<=0:
@@ -206,14 +207,25 @@ async def battle_accept(c,attacker_id,bot):
     attacker_id=int(attacker_id);defender_id=c.from_user.id
     if INVITES.get(attacker_id)!=defender_id:return await c.answer('Приглашение уже недействительно.',show_alert=True)
     me=await user(attacker_id);opp=await user(defender_id)
-    if not me or not opp or cd_seconds(me) or cd_seconds(opp):return await c.answer('Бой уже недоступен.',show_alert=True)
+    if not me or not opp or cd_seconds(me) or cd_seconds(opp):
+        INVITES.pop(attacker_id,None)
+        return await c.answer('Бой уже недоступен.',show_alert=True)
     INVITES.pop(attacker_id,None)
     await c.message.edit_text('⚔️ БОЙ НАЧИНАЕТСЯ...')
+    try: attacker_animation=await bot.send_message(attacker_id,f'⚔️ {BRAND} • БОЙ\n\nБой начинается...')
+    except Exception: attacker_animation=None
     for i in range(15):
         line=random.choice(BATTLE_LINES)
-        try:await c.message.edit_text(f'⚔️ {BRAND} • БОЙ\n\n{line}\n\n⏱ {15-i} сек.')
+        text=f'⚔️ {BRAND} • БОЙ\n\n{line}\n\n⏱ {15-i} сек.'
+        try:await c.message.edit_text(text)
         except Exception:pass
+        if attacker_animation:
+            try:await bot.edit_message_text(chat_id=attacker_id,message_id=attacker_animation.message_id,text=text)
+            except Exception:pass
         await asyncio.sleep(1)
+    if attacker_animation:
+        try:await bot.edit_message_text(chat_id=attacker_id,message_id=attacker_animation.message_id,text='✅ Бой завершён. Ниже — результат.')
+        except Exception:pass
     a_after,d_after,winner,events,kills_a,kills_d=resolve(me,opp,with_kills=True);winner_id=attacker_id if winner=='attacker' else defender_id;loser_id=defender_id if winner=='attacker' else attacker_id;winner_arm=a_after if winner=='attacker' else d_after;loser_raw=d_after if winner=='attacker' else a_after;loser_arm={k:int(loser_raw[k])*80//100 for k in UNITS};winner_k=kills_a if winner=='attacker' else kills_d;loser_k=kills_d if winner=='attacker' else kills_a;reward=int(sum(winner_k[k]*UNITS[k]['price'] for k in UNITS)*.05);loser_reward=int(sum((int((opp if winner=='attacker' else me)[k])-loser_arm[k])*UNITS[k]['price'] for k in UNITS)*.02)
     db=await connect();sets=','.join(f'{k}=?' for k in UNITS);ksets=','.join(f'kill_{k}=kill_{k}+?' for k in UNITS);await db.execute(f'UPDATE users SET {sets},attacks_won=attacks_won+1,last_attack=? WHERE user_id=?',[winner_arm[k] for k in UNITS]+[now().isoformat(),winner_id]);await db.execute(f'UPDATE users SET {sets},attacks_lost=attacks_lost+1,last_attack=? WHERE user_id=?',[loser_arm[k] for k in UNITS]+[now().isoformat(),loser_id]);await db.execute(f'UPDATE users SET {ksets} WHERE user_id=?',[winner_k[k] for k in UNITS]+[winner_id]);await db.execute(f'UPDATE users SET {ksets} WHERE user_id=?',[loser_k[k] for k in UNITS]+[loser_id]);await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?',(reward,winner_id));await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?',(loser_reward,loser_id));await db.commit();await db.close()
     wn=await user(winner_id);winner_name='@'+wn['username'] if wn['username'] else f'ID {winner_id}';kills_w='\n'.join(f'{UNITS[k]["title"]}: {winner_k[k]}' for k in UNITS);kills_l='\n'.join(f'{UNITS[k]["title"]}: {loser_k[k]}' for k in UNITS);wintext=f'🏆 WIN\n\nПобедитель: {winner_name}\n💰 Награда: ${money(reward)}\n\n🎯 Уничтожено:\n{kills_w}';losstext=f'💀 LOSS\n\n🏆 Победитель: {winner_name}\n📉 Твоя армия: −20%\n💵 Компенсация: ${money(loser_reward)}\n\n🎯 Уничтожено:\n{kills_l}';await bot.send_message(winner_id,wintext,reply_markup=back());await bot.send_message(loser_id,losstext,reply_markup=back())
