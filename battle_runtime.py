@@ -23,6 +23,14 @@ def army_size(u): return sum(int(u[k]) for k in UNITS if k!='artillery')
 def army_text(u): return '\n'.join(f'{UNITS[k]["title"]}: {int(u[k])}' for k in UNITS)
 def clean(text): return re.sub(r'(?i)</?b>|&lt;/?b&gt;','',str(text or ''))
 
+def kill_stats(kills):
+    lines=[]
+    for key in UNITS:
+        amount=int(kills.get(key,0))
+        if amount>0:
+            lines.append(f'{UNITS[key]["title"]}: {amount}')
+    return '\n'.join(lines) if lines else 'Ничего не уничтожено.'
+
 async def show(c,text,markup=None):
     text=clean(text)
     try: await c.message.edit_text(text,reply_markup=markup)
@@ -78,33 +86,20 @@ async def confirm(c):
     if cooldown_seconds(opp):PENDING.pop(c.from_user.id,None);return await c.answer('Противник уже недоступен.',show_alert=True)
     PENDING.pop(c.from_user.id,None)
 
-    # Calculate the battle once. The result is revealed only after the 15-second animation.
     a_after,d_after,winner,events,kills_a,kills_d=resolve(me,opp,with_kills=True)
     actual=[]
     for e in events:
         e=clean(e).replace('🔴 ','').replace('🔵 ','')
         if e: actual.append('💥 '+e)
     fallback=[
-        '🛰 Разведка обнаружила позиции противника',
-        '🛩 БПЛА вышли на боевой курс',
-        '🎯 Перехватчики подняты в воздух',
-        '🚀 Ракетный удар нанесён',
-        '🪖 Пехота вступила в бой',
-        '🚙 БМП открыли огонь',
-        '🛡 Танки продвигаются вперёд',
-        '🚁 Вертолёты атакуют',
-        '✈️ Самолёты наносят удар',
-        '💥 Передовая линия столкнулась',
-        '🎯 Перехватчик сбит',
-        '🛩 БПЛА уничтожен',
-        '🚙 БМП подбита',
-        '🛡 Танковая техника уничтожена',
-        '⏳ Последние секунды боя...'
+        '🛰 Разведка обнаружила позиции противника','🛩 БПЛА вышли на боевой курс','🎯 Перехватчики подняты в воздух',
+        '🚀 Ракетный удар нанесён','🪖 Пехота вступила в бой','🚙 БМП открыли огонь','🛡 Танки продвигаются вперёд',
+        '🚁 Вертолёты атакуют','✈️ Самолёты наносят удар','💥 Передовая линия столкнулась','🎯 Перехватчик сбит',
+        '🛩 БПЛА уничтожен','🚙 БМП подбита','🛡 Танковая техника уничтожена','⏳ Последние секунды боя...'
     ]
     lines=(actual+fallback)[:15]
     while len(lines)<15: lines.append(fallback[len(lines)%len(fallback)])
 
-    # One message for attacker, one message for defender. Both are edited in-place once per second.
     try: await c.message.edit_text('⚔️ БОЙ\n\n🛰 Стороны готовят армии...')
     except Exception: pass
     try: await c.answer()
@@ -142,12 +137,14 @@ async def confirm(c):
     await db.execute('INSERT INTO battle_log(attacker,defender,winner,report,created_at) VALUES(?,?,?,?,?)',(c.from_user.id,uid,winner_id,report,now().isoformat()))
     await db.commit();await db.close()
 
+    winner_stats=kill_stats(winner_kills)
+    loser_stats=kill_stats(loser_kills)
     if winner=='attacker':
-        result=f'🏆 WIN\n\nТы победил!\n\n💰 +${money(winner_reward)}\n📉 Армия противника: −20%\n💵 Проигравшему: +${money(loser_reward)}'
-        defender_result=f'💀 LOSS\n\nНа тебя напали. Ты проиграл.\n\n📉 Твоя армия: −20%\n💰 Компенсация: +${money(loser_reward)}'
+        result=f'🏆 WIN\n\nТы победил!\n\n💰 +${money(winner_reward)}\n📉 Армия противника: −20%\n💵 Проигравшему: +${money(loser_reward)}\n\n💥 УНИЧТОЖЕНО ТОБОЙ:\n{winner_stats}'
+        defender_result=f'💀 LOSS\n\nНа тебя напали. Ты проиграл.\n\n📉 Твоя армия: −20%\n💰 Компенсация: +${money(loser_reward)}\n\n💥 УНИЧТОЖЕНО ТОБОЙ:\n{loser_stats}'
     else:
-        result=f'💀 LOSS\n\nТы проиграл.\n\n📉 Твоя армия: −20%\n💰 Компенсация: +${money(loser_reward)}'
-        defender_result=f'🏆 WIN\n\nТы победил нападающего!\n\n💰 +${money(winner_reward)}\n📉 Армия противника: −20%'
+        result=f'💀 LOSS\n\nТы проиграл.\n\n📉 Твоя армия: −20%\n💰 Компенсация: +${money(loser_reward)}\n\n💥 УНИЧТОЖЕНО ТОБОЙ:\n{winner_stats}'
+        defender_result=f'🏆 WIN\n\nТы победил нападающего!\n\n💰 +${money(winner_reward)}\n📉 Армия противника: −20%\n\n💥 УНИЧТОЖЕНО ТОБОЙ:\n{loser_stats}'
     try: await c.message.edit_text(clean(result),reply_markup=kb([[('⬅️ Назад','home')]]))
     except Exception: pass
     if opp_msg:
