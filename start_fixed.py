@@ -1,20 +1,17 @@
-"""Safe Pterodactyl launcher for WorldWarDynasty.
+"""Pterodactyl launcher for WorldWarDynasty.
 
-All bot features remain in run.py; this file only starts the application.
+This file deliberately contains no bot logic. It replaces itself with run.py,
+so Pterodactyl executes the real application exactly as `python run.py` does.
 """
-import asyncio
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+RUN = ROOT / "run.py"
 
-from run import main
+if not RUN.is_file():
+    raise FileNotFoundError(f"run.py not found: {RUN}")
 
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+os.chdir(ROOT)
+os.execv(sys.executable, [sys.executable, str(RUN)])
