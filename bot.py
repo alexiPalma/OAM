@@ -176,7 +176,7 @@ async def opponent(c,uid):
     uid=int(uid);me=await user(c.from_user.id);opp=await user(uid)
     if not opp or uid==c.from_user.id:return await c.answer('Игрок недоступен.',show_alert=True)
     if cd_seconds(me):return await c.answer('Ваш бой ещё на КД.',show_alert=True)
-    if cd_seconds(opp) or army_size(opp)<=0:return await c.answer('Этот игрок сейчас недоступен.',show_alert=True)
+    if army_size(opp)<=0:return await c.answer('Этот игрок сейчас недоступен.',show_alert=True)
     PENDING[c.from_user.id]=uid;n='@'+opp['username'] if opp['username'] else f'ID {uid}';await safe(c,await tpl('opponent',f'🎯 {BRAND} • ПРОТИВНИК\n\n👤 {n}\n\n{army_text(opp)}',username=n,army=army_text(opp)),kb([[('⚔️ НАПАСТЬ','battle_confirm')],[('⬅️ Назад','attack')]]))
 BATTLE_LINES=['⚔️ Идёт бой','💥 Гремят взрывы','🪖 Пехота зачищает посадки','🔥 Раздаются выстрелы','🌫 Над полем боя поднимается дым','⚡ Ударная волна проходит по позиции','🪖 Подразделения продвигаются вперёд','💥 На линии фронта новый взрыв','🏴 Позиции сторон меняются','⚔️ Бой продолжается']
 async def battle_confirm(c,bot):
@@ -202,7 +202,7 @@ async def battle_accept(c,attacker_id,bot):
     attacker_id=int(attacker_id);defender_id=c.from_user.id
     if INVITES.get(attacker_id)!=defender_id:return await c.answer('Приглашение уже недействительно.',show_alert=True)
     INVITES.pop(attacker_id,None);me=await user(attacker_id);opp=await user(defender_id)
-    if not me or not opp or cd_seconds(me) or cd_seconds(opp):return await c.answer('Бой уже недоступен.',show_alert=True)
+    if not me or not opp or cd_seconds(me):return await c.answer('Бой уже недоступен.',show_alert=True)
     await c.message.edit_text('⚔️ БОЙ НАЧИНАЕТСЯ...')
     for i in range(15):
         line=random.choice(BATTLE_LINES)
