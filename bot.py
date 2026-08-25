@@ -205,8 +205,9 @@ async def decline_loss(u):
 async def battle_accept(c,attacker_id,bot):
     attacker_id=int(attacker_id);defender_id=c.from_user.id
     if INVITES.get(attacker_id)!=defender_id:return await c.answer('Приглашение уже недействительно.',show_alert=True)
-    INVITES.pop(attacker_id,None);me=await user(attacker_id);opp=await user(defender_id)
+    me=await user(attacker_id);opp=await user(defender_id)
     if not me or not opp or cd_seconds(me) or cd_seconds(opp):return await c.answer('Бой уже недоступен.',show_alert=True)
+    INVITES.pop(attacker_id,None)
     await c.message.edit_text('⚔️ БОЙ НАЧИНАЕТСЯ...')
     for i in range(15):
         line=random.choice(BATTLE_LINES)
@@ -323,9 +324,9 @@ async def rules_from_message(m): await m.answer(f'📕 {BRAND} • ПРАВИЛ�
 async def attack_from_message(m):
     await ensure_user(m.from_user.id,m.from_user.username);u=await user(m.from_user.id);left=cd_seconds(u)
     if left:return await m.answer(f'⚔️ {BRAND} • ВЫЗОВЫ\n\n⏳ Ваш КД: {left//60:02d}:{left%60:02d}')
-    db=await connect();cur=await db.execute('SELECT * FROM users WHERE user_id!=? ORDER BY balance DESC',(m.from_user.id,));rows=await cur.fetchall();await db.close();players=[r for r in rows if not cd_seconds(r) and army_size(r)>0];out=[]
+    db=await connect();cur=await db.execute('SELECT * FROM users WHERE user_id!=? ORDER BY balance DESC',(m.from_user.id,));rows=await cur.fetchall();await db.close();players=[r for r in rows if army_size(r)>0];out=[]
     for p in players[:10]:
-        n='@'+p['username'] if p['username'] else f'ID {p["user_id"]}';out.append([(f'⚔️ {n} · {army_size(p)} ед.',f'opp:{p["user_id"]}')])
+        n='@'+p['username'] if p['username'] else f'ID {p["user_id"]}';status='✅ ГОТОВ' if cd_seconds(p)<=0 else f'⏳ КД {cd_text(p)}';out.append([(f'⚔️ {n} · {army_size(p)} ед. · {status}',f'opp:{p["user_id"]}')])
     if not out:return await m.answer('⚔️ Сейчас нет доступных противников.',reply_markup=back())
     out.append([('⬅️ Назад','home')]);await m.answer(f'⚔️ {BRAND} • ВЫБОР ПРОТИВНИКА\n\nВыберите игрока:',reply_markup=kb(out))
 async def attack_by_username(m,name):
