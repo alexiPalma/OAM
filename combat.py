@@ -8,6 +8,23 @@ def destroy(s, unit, amount):
     s[unit]=s.get(unit,0)-amount
     return amount
 
+def artillery_phase(attacker, defender, events, label, kills):
+    d=dict(defender)
+    for _ in range(int(attacker.get('artillery',0))):
+        if d.get('artillery',0) and roll(0.50):
+            killed=destroy(d,'artillery',1); kills['artillery']+=killed
+            events.append(f'{label} 💥 артиллерия уничтожила артиллерию — 50%')
+        if d.get('soldier',0):
+            killed=destroy(d,'soldier',30); kills['soldier']+=killed
+            events.append(f'{label} 💥 артиллерия уничтожила до 30 пехоты')
+        if d.get('bmp',0):
+            killed=destroy(d,'bmp',2); kills['bmp']+=killed
+            events.append(f'{label} 💥 артиллерия уничтожила до 2 БМП')
+        if d.get('tank',0) and roll(0.65):
+            killed=destroy(d,'tank',1); kills['tank']+=killed
+            events.append(f'{label} 💥 артиллерия уничтожила танк — 65%')
+    return d
+
 def side_attack(attacker, defender, events, label, kills):
     d=dict(defender)
     for _ in range(attacker['missile']):
@@ -71,7 +88,6 @@ def side_attack(attacker, defender, events, label, kills):
         if d['drone'] and roll(.05):
             killed=destroy(d,'drone',1); kills['drone']+=killed
             events.append(f'{label} 🎯 перехватчик сбил БПЛА — 5%')
-    # Новое правило: один солдат с шансом 50% контрит один дрон-перехватчик.
     for _ in range(attacker['soldier']):
         if d['interceptor'] and roll(.50):
             killed=destroy(d,'interceptor',1); kills['interceptor']+=killed
@@ -92,7 +108,8 @@ def side_attack(attacker, defender, events, label, kills):
 def resolve(attacker, defender, with_kills=False):
     a={k:int(attacker[k]) for k in UNITS}; d={k:int(defender[k]) for k in UNITS}
     events=[]; kills_a={k:0 for k in UNITS}; kills_d={k:0 for k in UNITS}
-    d_after=side_attack(a,d,events,'🔴',kills_a); a_after=side_attack(d,a,events,'🔵',kills_d)
+    d_after=artillery_phase(a,d,events,'🔴',kills_a); a_after=artillery_phase(d,a,events,'🔵',kills_d)
+    d_after=side_attack(a,d_after,events,'🔴',kills_a); a_after=side_attack(d,a_after,events,'🔵',kills_d)
     power_a=sum(a_after[k] for k in UNITS if k!='artillery'); power_d=sum(d_after[k] for k in UNITS if k!='artillery')
     winner='attacker' if power_a>=power_d else 'defender'
     if with_kills: return a_after,d_after,winner,events,kills_a,kills_d
