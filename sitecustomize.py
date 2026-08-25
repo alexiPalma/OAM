@@ -14,9 +14,16 @@ _ORIGINAL_ASYNCIO_RUN = asyncio.run
 def _finalize():
     try:
         import config
+        import bot as app
         main = sys.modules.get('__main__')
         if main is None or not str(getattr(main, '__file__', '')).endswith('run.py'):
             return
+
+        # config._patch_run expects a `case` symbol in run.py, but the real
+        # implementation lives in bot.py. Supplying that alias makes the
+        # existing patcher execute instead of silently returning False.
+        if not hasattr(main, 'case') and hasattr(app, 'case'):
+            main.case = app.case
 
         patcher = getattr(config, '_patch_run', None)
         if patcher:
