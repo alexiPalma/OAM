@@ -65,7 +65,10 @@ def cd_text(u):
 async def start(m):
     await ensure_user(m.from_user.id,m.from_user.username);u=await user(m.from_user.id);n='@'+m.from_user.username if m.from_user.username else 'не указан';t=await tpl('start',f'⚔️ {BRAND}\n\n👤 {n}\n💵 Баланс: ${money(u["balance"])}\n🏭 Ферма: {u["farm_level"]}/10\n\n🛰 Центр управления войсками:',username=n,balance=money(u['balance']),farm=u['farm_level']);await m.answer(t,reply_markup=home_kb(await admin(m.from_user.id)))
 async def profile(c):
-    u=await user(c.from_user.id);n='@'+u['username'] if u['username'] else 'не указан';kills='\n'.join(f'{a}: {int(u[b])}' for a,b in [('🪖 Пехота','kill_soldier'),('🎯 Перехватчики','kill_interceptor'),('🛩 БПЛА','kill_drone'),('🚙 БМП','kill_bmp'),('🛡 Танки','kill_tank'),('🚁 Вертолёты','kill_helicopter'),('✈️ Самолёты','kill_plane'),('🚀 Ракеты','kill_missile'),('💥 Артиллерия','kill_artillery')]);t=await tpl('profile',f'👤 {BRAND} • ПРОФИЛЬ\n\n👤 Юзер: {n}\n💵 Капитал: ${money(u["balance"])}\n🏭 Ферма: {u["farm_level"]}/10\n🏆 Побед: {u["attacks_won"]}\n💀 Поражений: {u["attacks_lost"]}\n⚔️ КД атаки: {cd_text(u)}\n\n🎯 УНИЧТОЖЕНО\n{kills}',username=n,balance=money(u['balance']),farm=u['farm_level'],wins=u['attacks_won'],losses=u['attacks_lost'],battle_cd=cd_text(u),kills=kills);await safe(c,t,back())
+    u=await user(c.from_user.id); name='@'+u['username'] if u['username'] else 'не указан'
+    kills=[('🪖 Пехота','kill_soldier'),('🎯 Перехватчики','kill_interceptor'),('🛩 БПЛА','kill_drone'),('🚙 БМП','kill_bmp'),('🛡 Танки','kill_tank'),('🚁 Вертолёты','kill_helicopter'),('✈️ Самолёты','kill_plane'),('🚀 Ракеты','kill_missile'),('💥 Артиллерия','kill_artillery')]
+    kt='\n'.join(f'{title}: {int(u[col])}' for title,col in kills)
+    await safe(c,f'🛰 {BRAND} • ЛИЧНОЕ ДОСЬЕ\n\n👤 Позывной: {name}\n💵 Капитал: ${money(u["balance"])}\n🏭 Ферма: {u["farm_level"]}/10\n🏆 Побед: {u["attacks_won"]}\n💀 Поражений: {u["attacks_lost"]}\n\n🎯 УНИЧТОЖЕНО\n{kt}',back())
 async def army(c):
     u=await user(c.from_user.id);kw={k:int(u[k]) for k in UNITS};kw['username']='@'+u['username'] if u['username'] else 'не указан';await safe(c,await tpl('army',f'🎖 {BRAND} • АРМИЯ\n\n{army_text(u)}',**kw),back())
 async def balance_from_message(m):
