@@ -39,9 +39,6 @@ async def init_db():
         'CREATE TABLE IF NOT EXISTS quest_claims(user_id INTEGER,quest_id TEXT,PRIMARY KEY(user_id,quest_id))']
     for sql in tables: await db.execute(sql)
 
-    # Migrate the old earn_claims schema that used (user_id, channel_id).
-    # The current earn system needs (user_id, task_id). Keep the legacy table
-    # as a backup instead of deleting any old data.
     cur = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='earn_claims'")
     if await cur.fetchone():
         cur = await db.execute('PRAGMA table_info(earn_claims)')
@@ -76,8 +73,15 @@ async def set_setting(key,value):
 async def is_admin(uid,owner_id):
     if uid==owner_id:return True
     db=await connect(); cur=await db.execute('SELECT 1 FROM admins WHERE user_id=?',(uid,)); row=await cur.fetchone(); await db.close(); return bool(row)
+
+RATING_WEIGHTS = {'soldier':1,'interceptor':1,'drone':3,'bmp':7,'artillery':8,'tank':10,'helicopter':15,'plane':25,'missile':50}
+
 async def top_users(limit=50):
-    db=await connect(); total=' + '.join(f'COALESCE({k},0)' for k in UNITS if k!='artillery');cur=await db.execute(f'SELECT user_id,username,balance,farm_level,{total} AS army_total FROM users ORDER BY army_total DESC, attacks_won DESC LIMIT ?',(max(1,min(50,int(limit))),));rows=await cur.fetchall();await db.close();return rows
+    db=await connect()
+    expr=' + '.join(f'COALESCE({k},0)*{weight}' for k,weight in RATING_WEIGHTS.items())
+    cur=await db.execute(f'SELECT user_id,username,balance,farm_level,{expr} AS army_total FROM users ORDER BY army_total DESC, attacks_won DESC, user_id ASC LIMIT ?',(max(1,min(50,int(limit))),))
+    rows=await cur.fetchall(); await db.close(); return rows
+
 async def all_user_ids():
     db=await connect(); cur=await db.execute('SELECT user_id FROM users'); rows=await cur.fetchall(); await db.close(); return [x[0] for x in rows]
 async def users_count():
