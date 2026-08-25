@@ -1,9 +1,4 @@
-"""Final aiogram callback dispatcher.
-
-The important rule here is: never call app.callback from inside the final
-callback. run.py freezes the runtime callback before wrappers are installed,
-so this dispatcher always has a stable non-recursive target.
-"""
+"""Final aiogram callback dispatcher with per-user group menu locking."""
 import bot as app
 import achievements
 from config import OWNER_ID, OWNER_ID2, OWNER_IDS, ADMIN_ID, UNITS
@@ -32,9 +27,6 @@ async def _admin_panel(c):
 async def _admin_section(c, data):
     if not await _admin_ok(c.from_user.id):
         return await c.answer('⛔ Нет доступа.', show_alert=True)
-    # admin_section is installed by the runtime layer. If a project version
-    # does not expose it, fall back to the stable runtime callback instead of
-    # displaying a fake "section opened" message.
     fn = getattr(app, 'admin_section', None)
     if fn is not None:
         return await fn(c, data)
@@ -73,18 +65,26 @@ async def _takeunit(m, parts):
 async def _takeunit_menu(c):
     if not await _admin_ok(c.from_user.id):
         return await c.answer('⛔ Нет доступа.', show_alert=True)
-    text = (
-        '➖ Списать технику\n\n'
-        'Команда:\n'
-        '/takeunit @username тип количество\n\n'
-        'Типы:\n' + ', '.join(UNITS.keys()) +
-        '\n\nПример:\n/takeunit @player soldier 100'
-    )
+    text = ('➖ Списать технику\n\nКоманда:\n/takeunit @username тип количество\n\nТипы:\n' + ', '.join(UNITS.keys()) + '\n\nПример:\n/takeunit @player soldier 100')
     return await app.safe(c, text, app.back('admin'))
 
 
 async def _dispatch(c):
-    data = c.data or ''
+    # Defense-in-depth: if the startup ownership patch is unavailable, group
+    # callbacks are still rejected when pressed by somebody else.
+    data = str(c.data or '')
+    marker = '|wwdu:'
+    if marker in data:
+        base, raw_owner = data.rsplit(marker, 1)
+        try:
+            owner = int(raw_owner)
+        except ValueError:
+            owner = -1
+        if owner != c.from_user.id:
+            return await c.answer('🔒 Это меню принадлежит другому пользователю.', show_alert=True)
+        data = base
+        c.data = data
+
     if data == 'achievements':
         return await achievements.menu(c)
     if data.startswith('ach:'):
@@ -98,9 +98,6 @@ async def _dispatch(c):
     if data.startswith('a_'):
         return await _admin_section(c, data)
 
-    # Every ordinary callback is sent to the frozen runtime handler. It is
-    # the handler that existed before this final wrapper, so 'home' and all
-    # other back buttons cannot recurse into this function.
     runtime = getattr(app, '_runtime_callback', None)
     if runtime is None:
         return await c.answer('Callback handler недоступен.', show_alert=True)
