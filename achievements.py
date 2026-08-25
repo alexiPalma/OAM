@@ -1,10 +1,11 @@
+import math
 import bot as app
 from db import connect, user
 from config import UNITS
 
 # Achievements are earned from DESTROYED enemy units, never from owned units.
-# Existing progression thresholds are preserved; artillery is a valid kill counter
-# but does not silently change the old thresholds.
+# Artillery starts on exactly the same achievement level as BMP, with a
+# requirement equal to BMP requirement +15% (rounded up).
 ACHIEVEMENTS = [
     ('recruit', '🪖 Рекрут', (100, 50, 15, 20, 1, 0, 0, 200), [('money', 50_000)]),
     ('soldier', '🎖 Солдат', (200, 75, 20, 30, 2, 0, 0, 300), [('money', 100_000)]),
@@ -21,17 +22,22 @@ ACHIEVEMENTS = [
     ('colonel', '🏅 Полковник', (300000, 2000, 700, 1000, 60, 50, 35, 50000), [('donate_case', 3), ('case2', 5), ('missile', 10), ('plane', 3), ('helicopter', 5), ('soldier', 25000)]),
 ]
 
-# The thresholds above use the historical eight-category achievement order.
-# The database also records kill_artillery, which is displayed in the profile
-# and can be used for future achievement tiers without breaking this progression.
-REQ_KEYS = ('kill_soldier', 'kill_drone', 'kill_tank', 'kill_bmp', 'kill_helicopter', 'kill_plane', 'kill_missile', 'kill_interceptor')
-REQ_NAMES = ('🪖 Уничтожено солдат', '🛩 Уничтожено БПЛА', '🛡 Уничтожено танков', '🚙 Уничтожено БМП', '🚁 Уничтожено вертолётов', '✈️ Уничтожено самолётов', '🚀 Уничтожено ракет', '🎯 Уничтожено перехватчиков')
+REQ_KEYS = ('kill_soldier', 'kill_drone', 'kill_tank', 'kill_bmp', 'kill_artillery', 'kill_helicopter', 'kill_plane', 'kill_missile', 'kill_interceptor')
+REQ_NAMES = ('🪖 Уничтожено солдат', '🛩 Уничтожено БПЛА', '🛡 Уничтожено танков', '🚙 Уничтожено БМП', '💥 Уничтожено артиллерии', '🚁 Уничтожено вертолётов', '✈️ Уничтожено самолётов', '🚀 Уничтожено ракет', '🎯 Уничтожено перехватчиков')
 REWARD_NAMES = {
     'soldier': '🪖 солдат', 'interceptor': '🎯 перехватчиков', 'drone': '🛩 БПЛА',
     'bmp': '🚙 БМП', 'artillery': '💥 артиллерии', 'tank': '🛡 танк',
     'helicopter': '🚁 вертолёт', 'plane': '✈️ самолёт', 'missile': '🚀 ракет',
     'case1': '📦 кейс №1', 'case2': '📦 кейс №2', 'donate_case': '⭐ донат-кейсов',
 }
+
+
+def requirements_for(requirements):
+    """Keep old achievement tuples intact; derive artillery from the BMP goal."""
+    values=list(requirements)
+    bmp_need=int(values[3]) if len(values) > 3 else 0
+    artillery_need=math.ceil(bmp_need * 1.15) if bmp_need > 0 else 0
+    return tuple(values[:4] + [artillery_need] + values[4:])
 
 
 async def init_achievements():
@@ -57,6 +63,7 @@ def reward_text(rewards):
 
 
 def met(row, requirements):
+    requirements=requirements_for(requirements)
     return all(int(row[key] or 0) >= needed for key, needed in zip(REQ_KEYS, requirements))
 
 
@@ -121,9 +128,10 @@ async def detail(c, aid):
         state = await cur.fetchone()
     finally:
         await db.close()
+    req_values=requirements_for(requirements)
     req = '\n'.join(
         f'{REQ_NAMES[i]}: {int(row[k] or 0)}/{need}'
-        for i, (k, need) in enumerate(zip(REQ_KEYS, requirements))
+        for i, (k, need) in enumerate(zip(REQ_KEYS, req_values))
         if need
     ) or 'Нет требований.'
     done = bool(state and int(state['completed']))
@@ -175,7 +183,6 @@ async def claim(c, aid):
             params.append(c.from_user.id)
             await db.execute(f'UPDATE users SET {",".join(sets)} WHERE user_id=?', params)
 
-        # Put case rewards into the real case inventory used by the Cases menu.
         await db.execute(
             'INSERT INTO case_inventory(user_id,case1,case2,donate_case) VALUES(?,?,?,?) '
             'ON CONFLICT(user_id) DO UPDATE SET case1=case1+excluded.case1,case2=case2+excluded.case2,donate_case=donate_case+excluded.donate_case',
