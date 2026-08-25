@@ -113,13 +113,11 @@ def promo_reward_label(state):
     return rt
 
 async def save_admin_promo(state):
-    await ensure_promo_schema()
-    db=await connect()
+    await ensure_promo_schema();db=await connect()
     try:
         code=state['code'];rt=state['reward_type'];amount=int(state['amount']);limit=int(state['limit'])
-        await db.execute("INSERT INTO promos(code,amount,uses,max_uses,reward_type,reward_amount) VALUES(?,?,0,?,?,?)",(code,amount if rt=='money' else 0,limit,rt,amount))
-        await db.commit()
-    finally: await db.close()
+        await db.execute("INSERT INTO promos(code,amount,uses,max_uses,reward_type,reward_amount) VALUES(?,?,0,?,?,?)",(code,amount if rt=='money' else 0,limit,rt,amount));await db.commit()
+    finally:await db.close()
 
 async def promo_create_from_text(m,text):
     uid=m.from_user.id
@@ -129,30 +127,22 @@ async def promo_create_from_text(m,text):
     step=state.get('step')
     if step=='code':
         code=text.strip()
-        if not re.fullmatch(r'[A-Za-z0-9_-]{2,64}',code):
-            await m.answer('❌ Неверный код. Используйте только A-Z, a-z, 0-9, _ и -.')
-            return True
+        if not re.fullmatch(r'[A-Za-z0-9_-]{2,64}',code):await m.answer('❌ Неверный код. Используйте только A-Z, a-z, 0-9, _ и -.');return True
         await ensure_promo_schema();db=await connect()
-        try:
-            cur=await db.execute('SELECT 1 FROM promos WHERE lower(code)=lower(?)',(code,));exists=await cur.fetchone()
+        try:cur=await db.execute('SELECT 1 FROM promos WHERE lower(code)=lower(?)',(code,));exists=await cur.fetchone()
         finally:await db.close()
-        if exists:
-            await m.answer('❌ Такой промокод уже существует. Введите другой код.')
-            return True
-        state['code']=code;state['step']='type'
-        await m.answer(f'🎟 Код: {code}\n\nШаг 2/4\n\nВыберите тип награды:',reply_markup=promo_type_kb());return True
+        if exists:await m.answer('❌ Такой промокод уже существует. Введите другой код.');return True
+        state['code']=code;state['step']='type';await m.answer(f'🎟 Код: {code}\n\nШаг 2/4\n\nВыберите тип награды:',reply_markup=promo_type_kb());return True
     if step=='amount':
         try:amount=int(text.replace(' ','').replace(',',''))
         except ValueError:await m.answer('❌ Введите целое положительное число.');return True
         if amount<=0 or amount>10**12:await m.answer('❌ Количество должно быть больше 0.');return True
-        state['amount']=amount;state['step']='limit'
-        await m.answer(f"🎟 Код: {state['code']}\n🎁 Награда: {promo_reward_label(state)}\n📦 Количество: {amount}\n\nШаг 4/4\n\nВведите лимит активаций:");return True
+        state['amount']=amount;state['step']='limit';await m.answer(f"🎟 Код: {state['code']}\n🎁 Награда: {promo_reward_label(state)}\n📦 Количество: {amount}\n\nШаг 4/4\n\nВведите лимит активаций:");return True
     if step=='limit':
         try:limit=int(text.replace(' ','').replace(',',''))
         except ValueError:await m.answer('❌ Введите целое положительное число.');return True
         if limit<=0 or limit>10**9:await m.answer('❌ Лимит должен быть больше 0.');return True
-        state['limit']=limit;await save_admin_promo(state)
-        label=promo_reward_label(state);code=state['code'];amount=state['amount'];PROMO_ADMIN.pop(uid,None)
+        state['limit']=limit;await save_admin_promo(state);label=promo_reward_label(state);code=state['code'];amount=state['amount'];PROMO_ADMIN.pop(uid,None)
         await m.answer(f'✅ ПРОМОКОД СОЗДАН\n\n🎟 Код: {code}\n🎁 Награда: {label}\n🔢 Количество: {amount}\n👥 Лимит: {limit}',reply_markup=promo_admin_kb());return True
     return False
 
@@ -251,7 +241,9 @@ async def usepromo(m,code):
     return await m.answer(f"🎉 Промокод активирован!\n\nНаграда: {reward}")
 
 async def shop(c):
-    rows=[[(f"{v['title']} — ${app.money(v['price'])}",f"buyq:{k}")] for k,v in UNITS.items()];rows.append([('⬅️ Назад','home'));return await app.safe(c,'🛒 АРСЕНАЛ\n\n'+'\n'.join(f"{v['title']} — ${app.money(v['price'])}" for v in UNITS.values()),scoped_kb(rows))
+    rows=[[(f"{v['title']} — ${app.money(v['price'])}",f"buyq:{k}")] for k,v in UNITS.items()]
+    rows.append([('⬅️ Назад','home')])
+    return await app.safe(c,'🛒 АРСЕНАЛ\n\n'+'\n'.join(f"{v['title']} — ${app.money(v['price'])}" for v in UNITS.values()),scoped_kb(rows))
 async def buyq(c,k):
     if k not in UNITS:return await c.answer('Недоступно',show_alert=True)
     app.STATE[c.from_user.id]=('buy',k);return await app.safe(c,f"🛒 {UNITS[k]['title']}\n\nЦена: ${app.money(UNITS[k]['price'])}\n\nВведите количество:",app.back('shop'))
