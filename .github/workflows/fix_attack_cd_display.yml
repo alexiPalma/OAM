@@ -1,0 +1,48 @@
+name: Fix attack CD display
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  fix:
+    if: "!contains(github.event.head_commit.message, 'Fix attack CD display')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch bot.py
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('bot.py')
+          s=p.read_text(encoding='utf-8')
+
+          # Keep every opponent visible, but restore the rule that an opponent on CD cannot be attacked.
+          s=s.replace("if not me or not opp or cd_seconds(me):", "if not me or not opp or cd_seconds(me) or cd_seconds(opp):", 1)
+          s=s.replace("if cd_seconds(me) or army_size(opp)<=0:return await m.answer('❌ Игрок сейчас недоступен.')", "if cd_seconds(me) or cd_seconds(opp) or army_size(opp)<=0:return await m.answer('❌ Игрок сейчас недоступен.')", 1)
+
+          # Show the opponent's CD in the attack list instead of hiding the opponent.
+          old="f'@{r[\"username\"]}'"
+          new="f'@{r[\"username\"]} • {\"✅ ГОТОВ\" if cd_seconds(r)<=0 else \"⏳ КД \"+cd_text(r)}'"
+          if old not in s:
+              raise SystemExit('opponent button label not found')
+          s=s.replace(old,new,1)
+
+          p.write_text(s,encoding='utf-8')
+          PY
+
+          python -m py_compile bot.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot.py
+          git diff --cached --quiet && exit 1
+          git commit -m 'Fix attack CD display'
+          git push origin HEAD:main
+
+      - name: Remove temporary workflow
+        if: always()
+        run: |
+          rm .github/workflows/fix_attack_cd_display.yml
+          git add .github/workflows/fix_attack_cd_display.yml
+          git commit -m 'Remove temporary attack CD display workflow' || true
+          git push origin HEAD:main || true
