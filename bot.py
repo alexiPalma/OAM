@@ -71,9 +71,9 @@ async def army(c):
 async def balance_from_message(m):
     await ensure_user(m.from_user.id,m.from_user.username);u=await user(m.from_user.id);await m.answer(f'💵 {BRAND} • БАЛАНС\n\n💰 Капитал: ${money(u["balance"])}',reply_markup=home_kb(await admin(m.from_user.id)))
 async def shop(c):
-    items='\n'.join(f'{v["title"]} — ${money(v["price"])}' for k,v in UNITS.items() if k!='artillery');rows=[[(f'{v["title"]} — ${money(v["price"])}',f'buyq:{k}')] for k,v in UNITS.items() if k!='artillery'];rows.append([('⬅️ Назад','home')]);await safe(c,f'🛒 {BRAND} • ВОЕННЫЙ АРСЕНАЛ\n\n{items}\n\nВыберите единицу и введите количество.',kb(rows))
+    items='\n'.join(f'{v["title"]} — ${money(v["price"])}' for k,v in UNITS.items());rows=[[(f'{v["title"]} — ${money(v["price"])}',f'buyq:{k}')] for k,v in UNITS.items()];rows.append([('⬅️ Назад','home')]);await safe(c,f'🛒 {BRAND} • ВОЕННЫЙ АРСЕНАЛ\n\n{items}\n\nВыберите единицу и введите количество.',kb(rows))
 async def buyq(c,k):
-    if k not in UNITS or k=='artillery':return await c.answer('Недоступно',show_alert=True)
+    if k not in UNITS:return await c.answer('Недоступно',show_alert=True)
     STATE[c.from_user.id]=('buy',k);await safe(c,f'🛒 {UNITS[k]["title"]}\n\nЦена: ${money(UNITS[k]["price"])}\n\nВведите количество:',back('shop'))
 async def buy_confirm(c,k,q):
     if k not in UNITS or q<1 or q>1000000:return await c.answer('Некорректное количество',show_alert=True)
@@ -314,7 +314,7 @@ async def balance_from_message(m):
 async def donate_from_message(m):
     contact=await get_str('donate_contact');await m.answer(f'💳 {BRAND} • ДОНАТ\n\n50 ⭐ — ${money(DONATIONS[50])}\n100 ⭐ — ${money(DONATIONS[100])}\n500 ⭐ — ${money(DONATIONS[500])}\n\n📨 {contact}',reply_markup=back())
 async def shop_from_message(m):
-    items='\n'.join(f'{v["title"]} — ${money(v["price"])}' for k,v in UNITS.items() if k!='artillery');rows=[[(f'{v["title"]} — ${money(v["price"])}',f'buyq:{k}')] for k,v in UNITS.items() if k!='artillery'];rows.append([('⬅️ Назад','home')]);await m.answer(f'🛒 {BRAND} • ВОЕННЫЙ АРСЕНАЛ\n\n{items}\n\nВыберите единицу.',reply_markup=kb(rows))
+    items='\n'.join(f'{v["title"]} — ${money(v["price"])}' for k,v in UNITS.items());rows=[[(f'{v["title"]} — ${money(v["price"])}',f'buyq:{k}')] for k,v in UNITS.items()];rows.append([('⬅️ Назад','home')]);await m.answer(f'🛒 {BRAND} • ВОЕННЫЙ АРСЕНАЛ\n\n{items}\n\nВыберите единицу.',reply_markup=kb(rows))
 async def rules_from_message(m): await m.answer(f'📕 {BRAND} • ПРАВИЛА\n\n1. Развивайте армию.\n2. Атаки имеют КД 10 минут.',reply_markup=back())
 async def attack_from_message(m):
     await ensure_user(m.from_user.id,m.from_user.username);u=await user(m.from_user.id);left=cd_seconds(u)
