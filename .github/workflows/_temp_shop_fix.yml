@@ -28,3 +28,4 @@ jobs:
           git add bot.py
           git commit -m 'Restore artillery in shop'
           git push
+# trigger
