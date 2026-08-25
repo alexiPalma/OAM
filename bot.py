@@ -163,7 +163,7 @@ async def earn_check(c,kind,tid,bot):
 async def attack(c,page=0):
     me=await user(c.from_user.id);left=cd_seconds(me)
     if left:return await safe(c,f'⚔️ {BRAND} • АТАКА\n\n⏳ КД: {left//60:02d}:{left%60:02d}',back())
-    db=await connect();cur=await db.execute('SELECT * FROM users WHERE user_id!=? ORDER BY balance DESC',(c.from_user.id,));allrows=await cur.fetchall();await db.close();players=[r for r in allrows if not cd_seconds(r) and army_size(r)>0 and r['user_id'] not in INVITES.values()];per=10;pages=max(1,(len(players)+per-1)//per);page=max(0,min(page,pages-1));items=players[page*per:(page+1)*per];rows=[]
+    db=await connect();cur=await db.execute('SELECT * FROM users WHERE user_id!=? ORDER BY balance DESC',(c.from_user.id,));allrows=await cur.fetchall();await db.close();players=[r for r in allrows if army_size(r)>0 and r['user_id'] not in INVITES.values()];per=10;pages=max(1,(len(players)+per-1)//per);page=max(0,min(page,pages-1));items=players[page*per:(page+1)*per];rows=[]
     for p in items:
         n='@'+p['username'] if p['username'] else f'ID {p["user_id"]}';rows.append([(f'⚔️ {n} · {army_size(p)} ед.',f'opp:{p["user_id"]}')])
     if not items:rows.append([('🔄 Обновить','attack')])
@@ -328,7 +328,7 @@ async def attack_by_username(m,name):
     target=await find_user(name)
     if not target:return await m.answer('❌ Игрок не найден.')
     me=await user(m.from_user.id);opp=await user(target['user_id'])
-    if cd_seconds(me) or cd_seconds(opp) or army_size(opp)<=0:return await m.answer('❌ Игрок сейчас недоступен.')
+    if cd_seconds(me) or army_size(opp)<=0:return await m.answer('❌ Игрок сейчас недоступен.')
     PENDING[m.from_user.id]=target['user_id'];n='@'+opp['username'] if opp['username'] else f'ID {opp["user_id"]}';await m.answer(f'🎯 ПРОТИВНИК\n\n👤 {n}\n\n{army_text(opp)}',reply_markup=kb([[('⚔️ НАПАСТЬ','battle_confirm')],[('⬅️ Назад','home')]]))
 async def callback(c,bot):
     d=c.data or ''
