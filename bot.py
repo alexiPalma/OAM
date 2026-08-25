@@ -8,7 +8,7 @@ from db import connect, init_db, ensure_user, user, top_users, users_count, all_
 from settings import init_settings, get_int, get_str
 from combat import resolve
 
-BRAND='WorldWarDynasty'; STATE={}; PENDING={}; INVITES={}; ATTACK_CD=timedelta(minutes=10)
+BRAND='WorldWarDynasty'; STATE={}; PENDING={}; INVITES={}; ATTACK_CD=timedelta(minutes=15)
 EDIT_FIELDS={
 'profile':('Профиль','{username} — юзер; {balance} — баланс; {farm} — ферма; {wins} — победы; {losses} — поражения; {battle_cd} — КД; {kills} — список убийств'),
 'army':('Армия','{username}; {soldier}; {interceptor}; {drone}; {bmp}; {tank}; {helicopter}; {plane}; {missile}; {artillery} — количества всех единиц'),
@@ -65,10 +65,7 @@ def cd_text(u):
 async def start(m):
     await ensure_user(m.from_user.id,m.from_user.username);u=await user(m.from_user.id);n='@'+m.from_user.username if m.from_user.username else 'не указан';t=await tpl('start',f'⚔️ {BRAND}\n\n👤 {n}\n💵 Баланс: ${money(u["balance"])}\n🏭 Ферма: {u["farm_level"]}/10\n\n🛰 Центр управления войсками:',username=n,balance=money(u['balance']),farm=u['farm_level']);await m.answer(t,reply_markup=home_kb(await admin(m.from_user.id)))
 async def profile(c):
-    u=await user(c.from_user.id); name='@'+u['username'] if u['username'] else 'не указан'
-    kills=[('🪖 Пехота','kill_soldier'),('🎯 Перехватчики','kill_interceptor'),('🛩 БПЛА','kill_drone'),('🚙 БМП','kill_bmp'),('🛡 Танки','kill_tank'),('🚁 Вертолёты','kill_helicopter'),('✈️ Самолёты','kill_plane'),('🚀 Ракеты','kill_missile'),('💥 Артиллерия','kill_artillery')]
-    kt='\n'.join(f'{title}: {int(u[col])}' for title,col in kills)
-    await safe(c,f'🛰 {BRAND} • ЛИЧНОЕ ДОСЬЕ\n\n👤 Позывной: {name}\n💵 Капитал: ${money(u["balance"])}\n🏭 Ферма: {u["farm_level"]}/10\n🏆 Побед: {u["attacks_won"]}\n💀 Поражений: {u["attacks_lost"]}\n\n🎯 УНИЧТОЖЕНО\n{kt}',back())
+    u=await user(c.from_user.id);n='@'+u['username'] if u['username'] else 'не указан';kills='\n'.join(f'{a}: {int(u[b])}' for a,b in [('🪖 Пехота','kill_soldier'),('🎯 Перехватчики','kill_interceptor'),('🛩 БПЛА','kill_drone'),('🚙 БМП','kill_bmp'),('🛡 Танки','kill_tank'),('🚁 Вертолёты','kill_helicopter'),('✈️ Самолёты','kill_plane'),('🚀 Ракеты','kill_missile'),('💥 Артиллерия','kill_artillery')]);t=await tpl('profile',f'👤 {BRAND} • ПРОФИЛЬ\n\n👤 Юзер: {n}\n💵 Капитал: ${money(u["balance"])}\n🏭 Ферма: {u["farm_level"]}/10\n🏆 Побед: {u["attacks_won"]}\n💀 Поражений: {u["attacks_lost"]}\n⚔️ КД атаки: {cd_text(u)}\n\n🎯 УНИЧТОЖЕНО\n{kills}',username=n,balance=money(u['balance']),farm=u['farm_level'],wins=u['attacks_won'],losses=u['attacks_lost'],battle_cd=cd_text(u),kills=kills);await safe(c,t,back())
 async def army(c):
     u=await user(c.from_user.id);kw={k:int(u[k]) for k in UNITS};kw['username']='@'+u['username'] if u['username'] else 'не указан';await safe(c,await tpl('army',f'🎖 {BRAND} • АРМИЯ\n\n{army_text(u)}',**kw),back())
 async def balance_from_message(m):
@@ -168,7 +165,7 @@ async def attack(c,page=0):
     if left:return await safe(c,f'⚔️ {BRAND} • АТАКА\n\n⏳ КД: {left//60:02d}:{left%60:02d}',back())
     db=await connect();cur=await db.execute('SELECT * FROM users WHERE user_id!=? ORDER BY balance DESC',(c.from_user.id,));allrows=await cur.fetchall();await db.close();players=[r for r in allrows if army_size(r)>0 and r['user_id'] not in INVITES.values()];per=10;pages=max(1,(len(players)+per-1)//per);page=max(0,min(page,pages-1));items=players[page*per:(page+1)*per];rows=[]
     for p in items:
-        n='@'+p['username'] if p['username'] else f'ID {p["user_id"]}';rows.append([(f'⚔️ {n} · {army_size(p)} ед.',f'opp:{p["user_id"]}')])
+        n='@'+p['username'] if p['username'] else f'ID {p["user_id"]}';status='✅ ГОТОВ' if cd_seconds(p)<=0 else f'⏳ КД {cd_text(p)}';rows.append([(f'⚔️ {n} · {army_size(p)} ед. · {status}',f'opp:{p["user_id"]}')])
     if not items:rows.append([('🔄 Обновить','attack')])
     nav=[]
     if page>0:nav.append(('⬅️ Назад',f'attack_page:{page-1}'))
@@ -183,10 +180,14 @@ async def opponent(c,uid):
     PENDING[c.from_user.id]=uid;n='@'+opp['username'] if opp['username'] else f'ID {uid}';await safe(c,await tpl('opponent',f'🎯 {BRAND} • ПРОТИВНИК\n\n👤 {n}\n\n{army_text(opp)}',username=n,army=army_text(opp)),kb([[('⚔️ НАПАСТЬ','battle_confirm')],[('⬅️ Назад','attack')]]))
 BATTLE_LINES=['⚔️ Идёт бой','💥 Гремят взрывы','🪖 Пехота зачищает посадки','🔥 Раздаются выстрелы','🌫 Над полем боя поднимается дым','⚡ Ударная волна проходит по позиции','🪖 Подразделения продвигаются вперёд','💥 На линии фронта новый взрыв','🏴 Позиции сторон меняются','⚔️ Бой продолжается']
 async def battle_confirm(c,bot):
-    uid=PENDING.pop(c.from_user.id,None)
+    uid=PENDING.get(c.from_user.id,None)
     if not uid:return await c.answer('Сначала выберите противника.',show_alert=True)
     me=await user(c.from_user.id);opp=await user(uid)
-    if not opp or cd_seconds(me) or cd_seconds(opp) or army_size(opp)<=0:return await c.answer('Бой сейчас недоступен.',show_alert=True)
+    if not opp or army_size(opp)<=0:
+        PENDING.pop(c.from_user.id,None);return await c.answer('Бой сейчас недоступен.',show_alert=True)
+    if cd_seconds(me):return await c.answer(f'Ваш бой ещё на КД: {cd_text(me)}.',show_alert=True)
+    if cd_seconds(opp):return await c.answer(f'Противник ещё на КД: {cd_text(opp)}.',show_alert=True)
+    PENDING.pop(c.from_user.id,None)
     INVITES[c.from_user.id]=uid;att='@'+me['username'] if me['username'] else f'ID {c.from_user.id}';text=await tpl('battle_invite',f'⚔️ {BRAND} • НА ВАС НАПАЛИ\n\n👤 Нападающий: {att}\n\n{army_text(me)}\n\nПримите бой или откажитесь.',attacker=att,army=army_text(me))
     try:await bot.send_message(uid,text,reply_markup=kb([[('⚔️ ПРИНЯТЬ БОЙ',f'accept:{c.from_user.id}')],[('🏳️ ОТКАЗАТЬСЯ',f'decline:{c.from_user.id}')]]))
     except Exception:INVITES.pop(c.from_user.id,None);return await c.answer('Не удалось отправить приглашение.',show_alert=True)
@@ -205,16 +206,16 @@ async def battle_accept(c,attacker_id,bot):
     attacker_id=int(attacker_id);defender_id=c.from_user.id
     if INVITES.get(attacker_id)!=defender_id:return await c.answer('Приглашение уже недействительно.',show_alert=True)
     INVITES.pop(attacker_id,None);me=await user(attacker_id);opp=await user(defender_id)
-    if not me or not opp or cd_seconds(me):return await c.answer('Бой уже недоступен.',show_alert=True)
+    if not me or not opp or cd_seconds(me) or cd_seconds(opp):return await c.answer('Бой уже недоступен.',show_alert=True)
     await c.message.edit_text('⚔️ БОЙ НАЧИНАЕТСЯ...')
     for i in range(15):
         line=random.choice(BATTLE_LINES)
         try:await c.message.edit_text(f'⚔️ {BRAND} • БОЙ\n\n{line}\n\n⏱ {15-i} сек.')
         except Exception:pass
         await asyncio.sleep(1)
-    a_after,d_after,winner,events,kills_a,kills_d=resolve(me,opp,with_kills=True);winner_id=attacker_id if winner=='attacker' else defender_id;loser_id=defender_id if winner=='attacker' else attacker_id;winner_arm=a_after if winner=='attacker' else d_after;loser_raw=d_after if winner=='attacker' else a_after;loser_arm={k:int(loser_raw[k])*80//100 for k in UNITS};winner_k=kills_a if winner=='attacker' else kills_d;reward=int(sum(winner_k[k]*UNITS[k]['price'] for k in UNITS)*.05);loser_reward=int(sum((int((opp if winner=='attacker' else me)[k])-loser_arm[k])*UNITS[k]['price'] for k in UNITS)*.02)
-    db=await connect();sets=','.join(f'{k}=?' for k in UNITS);ksets=','.join(f'kill_{k}=kill_{k}+?' for k in UNITS);await db.execute(f'UPDATE users SET {sets},attacks_won=attacks_won+1,last_attack=? WHERE user_id=?',[winner_arm[k] for k in UNITS]+[now().isoformat(),winner_id]);await db.execute(f'UPDATE users SET {sets},attacks_lost=attacks_lost+1,last_attack=? WHERE user_id=?',[loser_arm[k] for k in UNITS]+[now().isoformat(),loser_id]);await db.execute(f'UPDATE users SET {ksets} WHERE user_id=?',[winner_k[k] for k in UNITS]+[winner_id]);await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?',(reward,winner_id));await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?',(loser_reward,loser_id));await db.commit();await db.close()
-    wn=await user(winner_id);winner_name='@'+wn['username'] if wn['username'] else f'ID {winner_id}';kills_w='\n'.join(f'{UNITS[k]["title"]}: {winner_k[k]}' for k in UNITS);loser_k=kills_d if winner=='attacker' else kills_a;kills_l='\n'.join(f'{UNITS[k]["title"]}: {loser_k[k]}' for k in UNITS);wintext=await tpl('win',f'🏆 WIN\n\nПобедитель: {winner_name}\n💰 Награда: ${money(reward)}\n\n🎯 Уничтожено:\n{kills_w}',winner=winner_name,reward=money(reward),kills=kills_w);losstext=f'💀 LOSS\n\n🏆 Победитель: {winner_name}\n📉 Твоя армия: −20%\n💵 Компенсация: ${money(loser_reward)}\n\n🎯 Уничтожено:\n{kills_l}';await bot.send_message(winner_id,wintext,reply_markup=back());await bot.send_message(loser_id,losstext,reply_markup=back())
+    a_after,d_after,winner,events,kills_a,kills_d=resolve(me,opp,with_kills=True);winner_id=attacker_id if winner=='attacker' else defender_id;loser_id=defender_id if winner=='attacker' else attacker_id;winner_arm=a_after if winner=='attacker' else d_after;loser_raw=d_after if winner=='attacker' else a_after;loser_arm={k:int(loser_raw[k])*80//100 for k in UNITS};winner_k=kills_a if winner=='attacker' else kills_d;loser_k=kills_d if winner=='attacker' else kills_a;reward=int(sum(winner_k[k]*UNITS[k]['price'] for k in UNITS)*.05);loser_reward=int(sum((int((opp if winner=='attacker' else me)[k])-loser_arm[k])*UNITS[k]['price'] for k in UNITS)*.02)
+    db=await connect();sets=','.join(f'{k}=?' for k in UNITS);ksets=','.join(f'kill_{k}=kill_{k}+?' for k in UNITS);await db.execute(f'UPDATE users SET {sets},attacks_won=attacks_won+1,last_attack=? WHERE user_id=?',[winner_arm[k] for k in UNITS]+[now().isoformat(),winner_id]);await db.execute(f'UPDATE users SET {sets},attacks_lost=attacks_lost+1,last_attack=? WHERE user_id=?',[loser_arm[k] for k in UNITS]+[now().isoformat(),loser_id]);await db.execute(f'UPDATE users SET {ksets} WHERE user_id=?',[winner_k[k] for k in UNITS]+[winner_id]);await db.execute(f'UPDATE users SET {ksets} WHERE user_id=?',[loser_k[k] for k in UNITS]+[loser_id]);await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?',(reward,winner_id));await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?',(loser_reward,loser_id));await db.commit();await db.close()
+    wn=await user(winner_id);winner_name='@'+wn['username'] if wn['username'] else f'ID {winner_id}';kills_w='\n'.join(f'{UNITS[k]["title"]}: {winner_k[k]}' for k in UNITS);kills_l='\n'.join(f'{UNITS[k]["title"]}: {loser_k[k]}' for k in UNITS);wintext=f'🏆 WIN\n\nПобедитель: {winner_name}\n💰 Награда: ${money(reward)}\n\n🎯 Уничтожено:\n{kills_w}';losstext=f'💀 LOSS\n\n🏆 Победитель: {winner_name}\n📉 Твоя армия: −20%\n💵 Компенсация: ${money(loser_reward)}\n\n🎯 Уничтожено:\n{kills_l}';await bot.send_message(winner_id,wintext,reply_markup=back());await bot.send_message(loser_id,losstext,reply_markup=back())
 async def battle_decline(c,attacker_id,bot):
     attacker_id=int(attacker_id);defender_id=c.from_user.id
     if INVITES.get(attacker_id)!=defender_id:return await c.answer('Приглашение уже недействительно.',show_alert=True)
@@ -250,7 +251,7 @@ async def admin_section(c,s):
     if s=='a_cases':return await cases(c)
     if s=='a_promos':return await safe(c,'🎟 ПРОМОКОДЫ\n\n/addpromo КОД СУММА КОЛИЧЕСТВО',back('admin'))
     if s=='a_give':return await safe(c,'🎖 ВЫДАТЬ\n\n/givecash @user сумма\n/givepehot @user ID количество\n\n1 пехота · 2 перехватчик · 3 БПЛА · 4 БМП · 5 танк · 6 вертолёт · 7 самолёт · 8 ракета · 9 артиллерия',back('admin'))
-    if s=='a_battles':return await safe(c,'⚔️ БОИ\n\nКД: 10 минут.\nПосле принятия: 15 секунд.\nПри победе: проигравший −20% армии.\nПри отказе: солдаты/перехватчики до 100 000 = −5%, больше = −3%; БМП до 100 = −5%, больше = −3%; танки до 75 = −5%, больше = −3%; самолёт/вертолёт/ракета — случайно 0 или 1.',back('admin'))
+    if s=='a_battles':return await safe(c,'⚔️ БОИ\n\nКД: 15 минут.\nПосле принятия: 15 секунд.\nПри победе: проигравший −20% армии.\nПри отказе: солдаты/перехватчики до 100 000 = −5%, больше = −3%; БМП до 100 = −5%, больше = −3%; танки до 75 = −5%, больше = −3%; самолёт/вертолёт/ракета — случайно 0 или 1.',back('admin'))
     if s=='a_owner2':return await safe(c,f'👑 ВЛАДЕЛЕЦ 2\n\nID: {OWNER_ID2 or "не задан"}\n\n.env:\nOWNER_ID=первый_ID\nOWNER_ID2=второй_ID',back('admin'))
     return await safe(c,f'⚙️ {s}\n\nРаздел открыт.',back('admin'))
 async def earn_add(c,kind):
@@ -318,7 +319,7 @@ async def donate_from_message(m):
     contact=await get_str('donate_contact');await m.answer(f'💳 {BRAND} • ДОНАТ\n\n50 ⭐ — ${money(DONATIONS[50])}\n100 ⭐ — ${money(DONATIONS[100])}\n500 ⭐ — ${money(DONATIONS[500])}\n\n📨 {contact}',reply_markup=back())
 async def shop_from_message(m):
     items='\n'.join(f'{v["title"]} — ${money(v["price"])}' for k,v in UNITS.items());rows=[[(f'{v["title"]} — ${money(v["price"])}',f'buyq:{k}')] for k,v in UNITS.items()];rows.append([('⬅️ Назад','home')]);await m.answer(f'🛒 {BRAND} • ВОЕННЫЙ АРСЕНАЛ\n\n{items}\n\nВыберите единицу.',reply_markup=kb(rows))
-async def rules_from_message(m): await m.answer(f'📕 {BRAND} • ПРАВИЛА\n\n1. Развивайте армию.\n2. Атаки имеют КД 10 минут.',reply_markup=back())
+async def rules_from_message(m): await m.answer(f'📕 {BRAND} • ПРАВИЛА\n\n1. Развивайте армию.\n2. Атаки имеют КД 15 минут.',reply_markup=back())
 async def attack_from_message(m):
     await ensure_user(m.from_user.id,m.from_user.username);u=await user(m.from_user.id);left=cd_seconds(u)
     if left:return await m.answer(f'⚔️ {BRAND} • ВЫЗОВЫ\n\n⏳ Ваш КД: {left//60:02d}:{left%60:02d}')
