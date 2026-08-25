@@ -1,0 +1,39 @@
+name: Restore exact old profile
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  restore:
+    if: "!contains(github.event.head_commit.message, 'Restore exact old profile')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch profile
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('bot.py')
+          s=p.read_text(encoding='utf-8')
+          start=s.index('async def profile(c):')
+          end=s.index('async def army(c):', start)
+          new='''async def profile(c):\n    u=await user(c.from_user.id); name='@'+u['username'] if u['username'] else 'не указан'\n    kills=[('🪖 Пехота','kill_soldier'),('🎯 Перехватчики','kill_interceptor'),('🛩 БПЛА','kill_drone'),('🚙 БМП','kill_bmp'),('🛡 Танки','kill_tank'),('🚁 Вертолёты','kill_helicopter'),('✈️ Самолёты','kill_plane'),('🚀 Ракеты','kill_missile'),('💥 Артиллерия','kill_artillery')]\n    kt='\\n'.join(f'{title}: {int(u[col])}' for title,col in kills)\n    await safe(c,f'🛰 {BRAND} • ЛИЧНОЕ ДОСЬЕ\\n\\n👤 Позывной: {name}\\n💵 Капитал: ${money(u["balance"])}\\n🏭 Ферма: {u["farm_level"]}/10\\n🏆 Побед: {u["attacks_won"]}\\n💀 Поражений: {u["attacks_lost"]}\\n\\n🎯 УНИЧТОЖЕНО\\n{kt}',back())\n'''
+          s=s[:start]+new+s[end:]
+          p.write_text(s,encoding='utf-8')
+          PY
+          python -m py_compile bot.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot.py
+          git commit -m 'Restore exact old profile'
+          git push origin HEAD:main
+      - name: Remove workflow
+        if: always()
+        run: |
+          git config user.name 'github-actions[bot]' || true
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com' || true
+          rm -f .github/workflows/restore_profile_exact.yml
+          git add .github/workflows/restore_profile_exact.yml
+          git commit -m 'Remove temporary profile restore workflow' || true
+          git push origin HEAD:main || true
