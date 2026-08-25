@@ -15,9 +15,14 @@ def _finalize():
     try:
         import config
         import bot as app
+        import battle_rules_patch
         main = sys.modules.get('__main__')
         if main is None or not str(getattr(main, '__file__', '')).endswith('run.py'):
             return
+
+        # Activate the real battle implementation before the dispatcher starts.
+        # This replaces bot.battle_accept, which the callback already calls.
+        battle_rules_patch.install(app)
 
         # config._patch_run expects a `case` symbol in run.py, but the real
         # implementation lives in bot.py. Supplying that alias makes the
@@ -39,15 +44,20 @@ def _finalize():
 def _install_achievement_guard():
     try:
         import achievements
+        # The main achievements module now derives artillery requirements from
+        # the BMP requirement. Keep the compatibility guard aligned with the
+        # nine counters, including kill_artillery.
         achievements.REQ_KEYS = (
             'kill_soldier', 'kill_drone', 'kill_tank', 'kill_bmp',
-            'kill_helicopter', 'kill_plane', 'kill_missile', 'kill_interceptor',
+            'kill_artillery', 'kill_helicopter', 'kill_plane', 'kill_missile',
+            'kill_interceptor',
         )
         achievements.REQ_NAMES = (
             '💀 Уничтожено солдат', '💀 Уничтожено БПЛА',
             '💀 Уничтожено танков', '💀 Уничтожено БМП',
-            '💀 Уничтожено вертолётов', '💀 Уничтожено самолётов',
-            '💀 Уничтожено ракет', '💀 Уничтожено перехватчиков',
+            '💥 Уничтожено артиллерии', '💀 Уничтожено вертолётов',
+            '💀 Уничтожено самолётов', '💀 Уничтожено ракет',
+            '💀 Уничтожено перехватчиков',
         )
     except Exception:
         pass
