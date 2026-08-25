@@ -1,1 +1,0 @@
-# This file is populated from the existing sitecustomize.py blob via Git history.
