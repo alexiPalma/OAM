@@ -140,7 +140,7 @@ async def top(c):
         medal=('🥇','🥈','🥉')[i-1] if i<=3 else '🎖️';name='@'+r['username'] if r['username'] else f"ID {r['user_id']}";out.append(f"{medal} {i}. {name} — 🎖 {int(r['army_total'])}")
     return await app.safe(c,'🏆 ТОП ВОЯК\n\n'+('\n'.join(out) or 'Пока игроков нет.')+'\n\nРейтинг: солдат 1 | перехватчик 1 | БПЛА 3 | БМП 7 | артиллерия 8 | танк 10 | вертолёт 15 | самолёт 25 | ракета 50',app.back())
 
-async def callback(c,tg_bot:Bot):
+async def callback(c,bot:Bot):
     data=c.data or ''
     if c.message and c.message.chat.type!='private':
         if data.startswith('g:'):
@@ -155,7 +155,7 @@ async def callback(c,tg_bot:Bot):
     if data.startswith('buyq:'):return await buyq(c,data[5:])
     if data=='top':return await top(c)
     if data=='help':return await help_cmd(c.message)
-    return await run.callback(c,tg_bot)
+    return await run.callback(c,bot)
 
 
 def normalize_keyword(text):
@@ -165,19 +165,13 @@ def normalize_keyword(text):
     s=re.sub(r'[.!?,;:]+$','',s)
     return s.strip()
 
-async def text_handler(m,tg_bot:Bot):
+async def text_handler(m,bot:Bot):
     text=(m.text or '').strip();key=normalize_keyword(text);p=text.split();cmd=('/'+key.split()[0]) if key else ''
-    # These are real message keywords, not suggestions in /help.
-    if key in ('хелп','help'):
-        return await help_cmd(m)
-    if key in ('бонус','bonus'):
-        return await bonus_keyword(m)
-    if key in ('коды','codes'):
-        return await codes(m)
-    if key.startswith('хелп ') or key.startswith('help '):
-        return await help_cmd(m)
-    if key.startswith('бонус ') or key.startswith('bonus '):
-        return await bonus_keyword(m)
+    if key in ('хелп','help'): return await help_cmd(m)
+    if key in ('бонус','bonus'): return await bonus_keyword(m)
+    if key in ('коды','codes'): return await codes(m)
+    if key.startswith('хелп ') or key.startswith('help '): return await help_cmd(m)
+    if key.startswith('бонус ') or key.startswith('bonus '): return await bonus_keyword(m)
     if cmd in ('/коды','/codes'):return await codes(m)
     if cmd=='/givepehot':return await give(m,p[1:])
     if cmd=='/addpromo':return await addpromo(m,p[1:])
@@ -186,7 +180,7 @@ async def text_handler(m,tg_bot:Bot):
         PROMO_WAIT.add(m.from_user.id);return await m.answer('🎟 Введите промокод:')
     if m.from_user.id in PROMO_WAIT and not text.startswith('/'):
         PROMO_WAIT.discard(m.from_user.id);return await usepromo(m,text)
-    return await run.text_handler(m,tg_bot)
+    return await run.text_handler(m,bot)
 
 async def start(m):
     return await run.start_wrapper(m)
