@@ -32,7 +32,7 @@ FARMS = {
 
 UNITS = {
     'soldier': {'id': 1, 'title': '🪖 Пехота', 'price': 20_000, 'loss': 1_000, 'rating': 1},
-    'interceptor': {'id': 2, 'title': '🎯 Дрон-перехватчик', 'price': 4_000, 'loss': 4_000, 'rating': 1},
+    'interceptor': {'id': 2, 'title': '🎯 Дрон-перехватчик', 'price': 9_000, 'loss': 4_000, 'rating': 1},
     'drone': {'id': 3, 'title': '🛩 БПЛА', 'price': 120_000, 'loss': 20_000, 'rating': 3},
     'bmp': {'id': 4, 'title': '🚙 БМП', 'price': 1_000_000, 'loss': 55_000, 'rating': 7},
     'artillery': {'id': 9, 'title': '💥 Артиллерия', 'price': 2_500_000, 'loss': 250_000, 'rating': 8},
@@ -178,12 +178,9 @@ def _patch_bot(app, run):
         if k not in UNITS or q < 1 or q > 1_000_000:
             return await c.answer('Некорректное количество', show_alert=True)
         price = UNITS[k]['price'] * q
-        db = await app.connect()
+        db = await connect()
         try:
-            cur = await db.execute(
-                f'UPDATE users SET balance=balance-?,{k}={k}+? WHERE user_id=? AND balance>=?',
-                (price, q, c.from_user.id, price),
-            )
+            cur = await db.execute(f'UPDATE users SET balance=balance-?,{k}={k}+? WHERE user_id=? AND balance>=?', (price, q, c.from_user.id, price))
             await db.commit()
         finally:
             await db.close()
@@ -196,287 +193,22 @@ def _patch_bot(app, run):
     app.buyq = fixed_buyq
     app.buy_confirm = fixed_buy_confirm
 
-    async def fixed_top(c):
-        from db import top_users
-        rows = await top_users(50)
-        out = []
-        for i, r in enumerate(rows, 1):
-            medal = ['🥇', '🥈', '🥉'][i - 1] if i <= 3 else '🎖️'
-            name = '@' + r['username'] if r['username'] else f'ID {r["user_id"]}'
-            out.append(f'{medal} {i}. {name} — 🎖 {app.money(r["army_total"])}')
-        text = f'🏆 {app.BRAND} • ТОП ВОЯК\n\n' + ('\n'.join(out) if out else 'Пока игроков нет.')
-        return await app.safe(c, text, app.back())
-
-    app.top = fixed_top
-
-    async def fixed_daily(c):
-        import random
-        from datetime import date
-        u = await app.user(c.from_user.id)
-        today = app.now().date().isoformat()
-        if u['daily_claim'] == today:
-            return await c.answer('Сегодня уже получено.', show_alert=True)
-        r = random.uniform(0, 100)
-        acc = 0
-        selected = None
-        for prize in DAILY_BONUS_PRIZES:
-            acc += prize[0]
-            if r < acc:
-                selected = prize
-                break
-        if selected is None:
-            return await c.answer('Попробуйте ещё раз.', show_alert=True)
-        _, kind, amount, label = selected
-        db = await app.connect()
-        try:
-            if kind in ('case1', 'case2', 'donate_case'):
-                await db.execute('CREATE TABLE IF NOT EXISTS case_inventory(user_id INTEGER PRIMARY KEY,case1 INTEGER NOT NULL DEFAULT 0,case2 INTEGER NOT NULL DEFAULT 0,donate_case INTEGER NOT NULL DEFAULT 0)')
-                await db.execute(
-                    f'INSERT INTO case_inventory(user_id,{kind}) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET {kind}={kind}+excluded.{kind}',
-                    (c.from_user.id, int(amount)),
-                )
-            else:
-                col = 'balance' if kind == 'money' else kind
-                await db.execute(f'UPDATE users SET {col}={col}+?,daily_claim=? WHERE user_id=?', (amount, today, c.from_user.id))
-            await db.execute('UPDATE users SET daily_claim=? WHERE user_id=?', (today, c.from_user.id))
-            await db.commit()
-        finally:
-            await db.close()
-        return await app.safe(c, f'🎁 Вы получили: {label}.', app.back('bonus'))
-
-    app.daily = fixed_daily
-
-    async def fixed_promo(message, code):
-        db = await app.connect()
-        try:
-            cur = await db.execute('SELECT * FROM promos WHERE lower(code)=lower(?)', (code.strip(),))
-            promo = await cur.fetchone()
-            if not promo:
-                return await message.answer('❌ Промокод не найден.')
-            if int(promo['uses']) >= int(promo['max_uses']):
-                return await message.answer('❌ Промокод больше недоступен.')
-            cur = await db.execute('SELECT 1 FROM promo_uses WHERE code=? AND user_id=?', (promo['code'], message.from_user.id))
-            if await cur.fetchone():
-                return await message.answer('❌ Вы уже использовали этот промокод.')
-            reward_type = str(promo['reward_type'] or 'money')
-            amount = int(promo['reward_amount'] or promo['amount'] or 0)
-            if reward_type.startswith('case:'):
-                case = reward_type.split(':', 1)[1]
-                if case not in ('case1', 'case2', 'donate_case'):
-                    return await message.answer('❌ Некорректный кейс.')
-                await db.execute('CREATE TABLE IF NOT EXISTS case_inventory(user_id INTEGER PRIMARY KEY,case1 INTEGER NOT NULL DEFAULT 0,case2 INTEGER NOT NULL DEFAULT 0,donate_case INTEGER NOT NULL DEFAULT 0)')
-                await db.execute(
-                    f'INSERT INTO case_inventory(user_id,{case}) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET {case}={case}+excluded.{case}',
-                    (message.from_user.id, amount),
-                )
-                reward_text = f'📦 {case} × {amount}'
-            elif reward_type.startswith('unit:'):
-                unit = reward_type.split(':', 1)[1]
-                if unit not in UNITS or amount <= 0:
-                    return await message.answer('❌ Промокод содержит некорректную технику.')
-                await db.execute(f'UPDATE users SET {unit}={unit}+? WHERE user_id=?', (amount, message.from_user.id))
-                reward_text = f'{UNITS[unit]["title"]} × {amount}'
-            else:
-                await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (amount, message.from_user.id))
-                reward_text = f'💵 +${app.money(amount)}'
-            await db.execute('UPDATE promos SET uses=uses+1 WHERE code=?', (promo['code'],))
-            await db.execute('INSERT INTO promo_uses(code,user_id) VALUES(?,?)', (promo['code'], message.from_user.id))
-            await db.commit()
-        finally:
-            await db.close()
-        return await message.answer(f'🎉 Промокод активирован!\n\nНаграда: {reward_text}')
-
-    app.use_promo_extended = fixed_promo
-
-    async def fixed_add_promo(message, parts):
-        if not await run.admin_ok(message.from_user.id):
-            return await message.answer('⛔ Нет доступа.')
-        if len(parts) == 3:
-            code, amount_s, max_s = parts
-            reward_type = 'money'
-        elif len(parts) == 4 and parts[1].lower() == 'money':
-            code, _, amount_s, max_s = parts
-            reward_type = 'money'
-        elif len(parts) == 5 and parts[1].lower() in ('unit', 'tech', 'equipment'):
-            code, _, unit, amount_s, max_s = parts
-            unit = unit.lower()
-            if unit not in UNITS:
-                return await message.answer('❌ Неизвестная техника.')
-            reward_type = 'unit:' + unit
-        elif len(parts) == 5 and parts[1].lower() in ('case', 'cases'):
-            code, _, case, amount_s, max_s = parts
-            case = case.lower()
-            if case not in ('case1', 'case2', 'donate_case'):
-                return await message.answer('❌ Кейс: case1, case2 или donate_case.')
-            reward_type = 'case:' + case
-        else:
-            return await message.answer(
-                '❌ Формат:\n'
-                '/addpromo КОД СУММА ЛИМИТ\n'
-                '/addpromo КОД unit ТЕХНИКА КОЛИЧЕСТВО ЛИМИТ\n'
-                '/addpromo КОД case КЕЙС КОЛИЧЕСТВО ЛИМИТ\n\n'
-                'Кейсы: case1, case2, donate_case'
-            )
-        try:
-            amount, max_uses = int(amount_s), int(max_s)
-        except ValueError:
-            return await message.answer('❌ Количество и лимит должны быть числами.')
-        if amount <= 0 or max_uses <= 0:
-            return await message.answer('❌ Значения должны быть больше нуля.')
-        db = await app.connect()
-        try:
-            await db.execute(
-                '''INSERT INTO promos(code,amount,uses,max_uses,reward_type,reward_amount)
-                   VALUES(?,?,0,?,?,?)
-                   ON CONFLICT(code) DO UPDATE SET amount=excluded.amount,max_uses=excluded.max_uses,
-                   reward_type=excluded.reward_type,reward_amount=excluded.reward_amount''',
-                (code, amount if reward_type == 'money' else 0, max_uses, reward_type, amount),
-            )
-            await db.commit()
-        finally:
-            await db.close()
-        if reward_type == 'money':
-            label = f'💵 ${app.money(amount)}'
-        elif reward_type.startswith('unit:'):
-            label = f'{UNITS[reward_type.split(":", 1)[1]]["title"]} × {amount}'
-        else:
-            label = f'📦 {reward_type.split(":", 1)[1]} × {amount}'
-        return await message.answer(f'✅ Промокод создан/обновлён.\n\n🎟 {code}\n🎁 {label}\n👥 Лимит: {max_uses}')
-
-    run.add_promo = fixed_add_promo
-
-    async def fixed_help(message):
-        return await message.answer(
-            f'ℹ️ {app.BRAND} • ПОМОЩЬ\n\n'
-            '🏭 ферма — открыть ферму\n'
-            '🎖 армия / а — открыть армию\n'
-            '🛒 шоп — открыть арсенал\n'
-            '⚔️ атака / вызовы — начать атаку\n'
-            '💰 заработать — задания на заработок\n'
-            '📋 задания — постоянные задания\n'
-            '🎁 бонус — ежедневный бонус\n'
-            '🎟 промо — промокод\n'
-            '🏆 ачивки — достижения\n'
-            '🏆 топ — рейтинг воинов',
-            reply_markup=app.home_kb(await run.admin_ok(message.from_user.id)),
-        )
-
-    async def fixed_bonus_keyword(message):
-        prizes = '\n'.join(f'{p:g}% — {label}' for p, _, _, label in DAILY_BONUS_PRIZES)
-        return await message.answer(
-            f'🎁 {app.BRAND} • ЕЖЕДНЕВНЫЙ БОНУС\n\n{prizes}',
-            reply_markup=app.kb([[('🎁 Забрать', 'daily')], [('⬅️ Назад', 'home')]]),
-        )
-
-    run._wwd_help = fixed_help
-    run._wwd_bonus_keyword = fixed_bonus_keyword
-    run._wwd_render_context = render_context
-    run._wwd_restore_context = restore_context
-
-    original_run_earn_kb = getattr(run, 'earn_kb', None)
-    if original_run_earn_kb:
-        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-        def fixed_earn_kb(tasks, claimed):
-            owner = _GROUP_RENDER_USER.get()
-            rows = []
-            labels = {'boost': '🚀 Буст канала / группы', 'channel': '📢 Подписка на канал', 'group': '👥 Вступление в группу'}
-            for task in tasks:
-                label = labels.get(task['kind'], task['kind'])
-                if task['id'] in claimed:
-                    rows.append([InlineKeyboardButton(text=f'☑️ {label} · награда получена', callback_data=f'{_GROUP_PREFIX}{owner}:earn_done' if owner else 'earn_done')])
-                    continue
-                rows.append([InlineKeyboardButton(text=f'{label} · +${app.money(task["reward"])}', url=str(task['url']).strip())])
-                cb = f'earn_check:{task["kind"]}:{task["id"]}'
-                if owner:
-                    cb = f'{_GROUP_PREFIX}{owner}:{cb}'
-                rows.append([InlineKeyboardButton(text='✅ Проверить выполнение', callback_data=cb)])
-            cb_tasks = f'{_GROUP_PREFIX}{owner}:tasks' if owner else 'tasks'
-            cb_home = f'{_GROUP_PREFIX}{owner}:home' if owner else 'home'
-            rows.append([InlineKeyboardButton(text='📋 Задания', callback_data=cb_tasks)])
-            rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data=cb_home)])
-            return InlineKeyboardMarkup(inline_keyboard=rows)
-
-        run.earn_kb = fixed_earn_kb
-
-    original_run_callback = run.callback
-    async def fixed_run_callback(c, tg_bot, *args, **kwargs):
-        data = c.data or ''
-        if getattr(c, 'message', None) and c.message.chat.type != 'private':
-            if data.startswith(_GROUP_PREFIX):
-                rest = data[len(_GROUP_PREFIX):]
-                owner_s, sep, original = rest.partition(':')
-                try:
-                    owner = int(owner_s)
-                except ValueError:
-                    owner = 0
-                if owner != c.from_user.id and not original.startswith(('accept:', 'decline:')):
-                    return await c.answer('⛔ Это меню принадлежит другому пользователю.', show_alert=True)
-                data = original
-                c.data = data
-            else:
-                # Unprefixed menu callbacks in groups are not allowed. Battle accept/decline
-                # remain protected by INVITES in bot.py and are intentionally allowed.
-                if not data.startswith(('accept:', 'decline:')):
-                    return await c.answer('⛔ Это меню нельзя использовать другому пользователю.', show_alert=True)
-            token = render_context(c.from_user.id)
-        else:
-            token = render_context(None)
-        try:
-            return await original_run_callback(c, tg_bot, *args, **kwargs)
-        finally:
-            restore_context(token)
-
-    run.callback = fixed_run_callback
-
-    original_run_text = run.text_handler
-    async def fixed_run_text(message, bot, *args, **kwargs):
-        token = render_context(message.from_user.id if message.chat.type != 'private' else None)
-        try:
-            low = (message.text or '').strip().lower()
-            if low in ('хелп', 'help', '/help', '/хелп'):
-                return await fixed_help(message)
-            if low in ('бонус', 'bonus', '/bonus', '/бонус'):
-                return await fixed_bonus_keyword(message)
-            return await original_run_text(message, bot, *args, **kwargs)
-        finally:
-            restore_context(token)
-
-    run.text_handler = fixed_run_text
+    try:
+        import shop_runtime_patch
+        shop_runtime_patch.install()
+    except Exception:
+        pass
 
 
 def _patch_run(run):
-    if getattr(run, '_wwd_final_fix', False):
+    if getattr(run, '_wwd_config_patched', False):
         return
-    run._wwd_final_fix = True
-
-    import bot as app
-    from db import connect, top_users
-
-    _patch_bot(app, run)
-
-    # Make the achievement module use the real kill counters and keep the
-    # existing progression/rewards intact. The detailed requirements are
-    # handled in achievements.py.
-
-    # Preserve the existing run callback routes while fixing the admin promo screen.
-    old_callback = run.callback
-
-    async def fixed_admin_callback(c, tg_bot, *args, **kwargs):
-        data = c.data or ''
-        if data == 'a_promos':
-            return await app.safe(
-                c,
-                '🎟 ПРОМОКОДЫ\n\n'
-                '/addpromo КОД СУММА ЛИМИТ\n'
-                '/addpromo КОД unit ТЕХНИКА КОЛИЧЕСТВО ЛИМИТ\n'
-                '/addpromo КОД case КЕЙС КОЛИЧЕСТВО ЛИМИТ\n\n'
-                'Кейсы: case1, case2, donate_case',
-                app.back('admin'),
-            )
-        return await old_callback(c, tg_bot, *args, **kwargs)
-
-    run.callback = fixed_admin_callback
+    run._wwd_config_patched = True
+    try:
+        import bot as app
+        _patch_bot(app, run)
+    except Exception:
+        pass
 
 
 if not any(isinstance(x, _RunFixFinder) for x in sys.meta_path):
