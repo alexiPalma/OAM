@@ -1,8 +1,8 @@
 """OAM master launcher.
 
 The runtime patches must be loaded before fix.py so admin UI, keyword
-navigation, promo UI, direct commands and the battle runtime all use the
-intended handlers.
+navigation, promo UI, callback compatibility, direct commands and the battle
+runtime all use the intended handlers.
 """
 import asyncio
 
@@ -14,6 +14,7 @@ import top_ui_patch
 import keyword_runtime_patch
 import promo_bridge
 import promo_command_patch
+import callback_compat_patch
 
 from fix import main
 
@@ -29,6 +30,7 @@ if __name__ == "__main__":
     print("[OAM] PROMO ROUTING: OK")
     print("[OAM] TWO-STEP PROMO INPUT: OK")
     print("[OAM] KEYWORD NAVIGATION: OK")
+    print("[OAM] CALLBACK COMPATIBILITY: OK")
     print("[OAM] DIRECT ATTACK COMMAND: OK")
     print("[OAM] AUTHORITATIVE RUNTIME: fix.py")
     asyncio.run(main())
