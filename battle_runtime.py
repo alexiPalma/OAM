@@ -8,9 +8,12 @@ from config import UNITS
 COOLDOWN = timedelta(minutes=10)
 PENDING = {}
 
-def kb(rows): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=a,callback_data=b) for a,b in row] for row in rows])
+def kb(rows):
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=a, callback_data=b) for a,b in row] for row in rows])
+
 def now(): return datetime.now(timezone.utc)
 def money(v): return f'{int(v):,}'.replace(',',' ')
+
 def cooldown_seconds(u):
     raw=u['last_attack'] or ''
     if not raw:return 0
@@ -19,17 +22,14 @@ def cooldown_seconds(u):
         if dt.tzinfo is None:dt=dt.replace(tzinfo=timezone.utc)
         return max(0,int((dt+COOLDOWN-now()).total_seconds()))
     except Exception:return 0
+
 def army_size(u): return sum(int(u[k]) for k in UNITS if k!='artillery')
 def army_text(u): return '\n'.join(f'{UNITS[k]["title"]}: {int(u[k])}' for k in UNITS)
 def clean(text): return re.sub(r'(?i)</?b>|&lt;/?b&gt;','',str(text or ''))
 
 def kill_stats(kills):
-    lines=[]
-    for key in UNITS:
-        amount=int(kills.get(key,0))
-        if amount>0:
-            lines.append(f'{UNITS[key]["title"]}: {amount}')
-    return '\n'.join(lines) if lines else 'Ничего не уничтожено.'
+    # В результате всегда перечисляется каждый тип техники, включая нули.
+    return '\n'.join(f'{UNITS[key]["title"]}: {int(kills.get(key,0))}' for key in UNITS)
 
 async def show(c,text,markup=None):
     text=clean(text)
@@ -71,7 +71,7 @@ async def opponent(c,uid):
     name='@'+opp['username'] if opp['username'] else f'ID {uid}'
     await show(c,f'🎯 WorldWarDynasty • ПРОТИВНИК\n\n👤 {name}\n\nАРМИЯ ПРОТИВНИКА\n{army_text(opp)}',kb([[('⚔️ НАПАСТЬ','battle_confirm')],[('⬅️ Назад','attack')]]))
 
-async def animate_one(message, lines, prefix=''):
+async def animate_one(message,lines,prefix=''):
     for line in lines:
         try: await message.edit_text(clean(prefix+line))
         except Exception: pass
@@ -81,16 +81,20 @@ async def confirm(c):
     uid=PENDING.get(c.from_user.id)
     if not uid:return await c.answer('Сначала выберите противника.',show_alert=True)
     me=await user(c.from_user.id);opp=await user(uid)
-    if not opp:return PENDING.pop(c.from_user.id,None) or await c.answer('Игрок недоступен.',show_alert=True)
+    if not opp:
+        PENDING.pop(c.from_user.id,None)
+        return await c.answer('Игрок недоступен.',show_alert=True)
     if cooldown_seconds(me):return await c.answer('Ваше КД ещё не закончилось.',show_alert=True)
-    if cooldown_seconds(opp):PENDING.pop(c.from_user.id,None);return await c.answer('Противник уже недоступен.',show_alert=True)
+    if cooldown_seconds(opp):
+        PENDING.pop(c.from_user.id,None)
+        return await c.answer('Противник уже недоступен.',show_alert=True)
     PENDING.pop(c.from_user.id,None)
 
     a_after,d_after,winner,events,kills_a,kills_d=resolve(me,opp,with_kills=True)
     actual=[]
     for e in events:
         e=clean(e).replace('🔴 ','').replace('🔵 ','')
-        if e: actual.append('💥 '+e)
+        if e:actual.append('💥 '+e)
     fallback=[
         '🛰 Разведка обнаружила позиции противника','🛩 БПЛА вышли на боевой курс','🎯 Перехватчики подняты в воздух',
         '🚀 Ракетный удар нанесён','🪖 Пехота вступила в бой','🚙 БМП открыли огонь','🛡 Танки продвигаются вперёд',
@@ -98,9 +102,10 @@ async def confirm(c):
         '🛩 БПЛА уничтожен','🚙 БМП подбита','🛡 Танковая техника уничтожена','⏳ Последние секунды боя...'
     ]
     lines=(actual+fallback)[:15]
-    while len(lines)<15: lines.append(fallback[len(lines)%len(fallback)])
+    while len(lines)<15:lines.append(fallback[len(lines)%len(fallback)])
 
-    try: await c.message.edit_text('⚔️ БОЙ\n\n🛰 Стороны готовят армии...')
+    # Атакующий ждёт весь бой. Защитнику показывается ровно 15 кадров.
+    try: await c.message.edit_text('⚔️ БОЙ\n\n⏳ Ждём противника...')
     except Exception: pass
     try: await c.answer()
     except Exception: pass
@@ -110,10 +115,11 @@ async def confirm(c):
         opp_msg=await c.bot.send_message(uid,f'⚔️ НА ВАС НАПАЛИ\n\n👤 Атакующий: {attacker_name}\n\n🛰 Стороны готовят армии...')
     except Exception: pass
 
-    async def defender_animation():
-        if not opp_msg:return
+    if opp_msg:
         await animate_one(opp_msg,lines,'⚔️ БОЙ\n\n')
-    await asyncio.gather(animate_one(c.message,lines,'⚔️ БОЙ\n\n'),defender_animation())
+    else:
+        # Даже если отправка защитнику не удалась, итог не показываем раньше 15 секунд.
+        await asyncio.sleep(15)
 
     surviving_winner=a_after if winner=='attacker' else d_after
     loser_source=d_after if winner=='attacker' else a_after
@@ -125,6 +131,7 @@ async def confirm(c):
     loser_kills=kills_d if winner=='attacker' else kills_a
     winner_reward=int(sum(winner_kills[k]*UNITS[k]['price'] for k in UNITS)*0.05)
     loser_reward=int(sum((int(loser_before[k])-loser_after[k])*UNITS[k]['price'] for k in UNITS)*0.02)
+
     db=await connect();sets=', '.join(f'{k}=?' for k in UNITS)
     await db.execute(f'UPDATE users SET {sets},attacks_won=attacks_won+1,last_attack=? WHERE user_id=?',[int(surviving_winner[k]) for k in UNITS]+[now().isoformat(),winner_id])
     await db.execute(f'UPDATE users SET {sets},attacks_lost=attacks_lost+1,last_attack=? WHERE user_id=?',[loser_after[k] for k in UNITS]+[now().isoformat(),loser_id])
@@ -137,8 +144,7 @@ async def confirm(c):
     await db.execute('INSERT INTO battle_log(attacker,defender,winner,report,created_at) VALUES(?,?,?,?,?)',(c.from_user.id,uid,winner_id,report,now().isoformat()))
     await db.commit();await db.close()
 
-    winner_stats=kill_stats(winner_kills)
-    loser_stats=kill_stats(loser_kills)
+    winner_stats=kill_stats(winner_kills);loser_stats=kill_stats(loser_kills)
     if winner=='attacker':
         result=f'🏆 WIN\n\nТы победил!\n\n💰 +${money(winner_reward)}\n📉 Армия противника: −20%\n💵 Проигравшему: +${money(loser_reward)}\n\n💥 УНИЧТОЖЕНО ТОБОЙ:\n{winner_stats}'
         defender_result=f'💀 LOSS\n\nНа тебя напали. Ты проиграл.\n\n📉 Твоя армия: −20%\n💰 Компенсация: +${money(loser_reward)}\n\n💥 УНИЧТОЖЕНО ТОБОЙ:\n{loser_stats}'
