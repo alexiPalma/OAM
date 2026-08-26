@@ -16,6 +16,10 @@ import promo_bridge
 
 from fix import main
 
+# Direct /атаковать @username support patches fix.text_handler after fix is
+# loaded and before fix.main registers the dispatcher handler.
+import attack_command_patch
+
 
 if __name__ == "__main__":
     check_combat_engine()
@@ -23,5 +27,6 @@ if __name__ == "__main__":
     print("[OAM] ADMIN PROMO UI: OK")
     print("[OAM] PROMO ROUTING: OK")
     print("[OAM] KEYWORD NAVIGATION: OK")
+    print("[OAM] DIRECT ATTACK COMMAND: OK")
     print("[OAM] AUTHORITATIVE RUNTIME: fix.py")
     asyncio.run(main())
