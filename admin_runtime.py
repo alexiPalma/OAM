@@ -17,6 +17,11 @@ UNIT_BUTTONS = [
     ('🚀 Ракеты','missile'), ('💥 Артиллерия','artillery')
 ]
 CASE_BUTTONS = [('📦 Кейс 1','case1'),('📦 Кейс 2','case2'),('🎖 Президентский','donate_case')]
+T = {
+ 'profile':'👤 Профиль','army':'🎖 Армия','farm':'🏭 Ферма','bonus':'🎁 Бонус','cases':'📦 Кейсы',
+ 'donate':'💳 Донат','top':'🏆 Топ вояк','earn':'💰 Заработать','attack':'⚔️ Атака',
+ 'help':'ℹ️ Помощь','rules':'📕 Правила'
+}
 
 async def promo_menu(c):
     text = (
@@ -88,34 +93,15 @@ async def _admins_text():
     return '\n'.join('• '+str(r['user_id']) for r in rows) or '• нет'
 
 async def _create_promo(m,p):
-    if len(p)==4 and p[2].isdigit() and p[3].isdigit():
-        code=p[1].upper(); reward_type='money'; amount=int(p[2]); maxuses=int(p[3])
-    elif len(p)==6 and p[2].lower()=='unit' and p[4].isdigit() and p[5].isdigit():
-        code=p[1].upper(); reward_type='unit:'+p[3].lower(); amount=int(p[4]); maxuses=int(p[5])
-    elif len(p)==6 and p[2].lower()=='case' and p[4].isdigit() and p[5].isdigit():
-        code=p[1].upper(); reward_type='case:'+p[3].lower(); amount=int(p[4]); maxuses=int(p[5])
-    else:
-        return await m.answer('❌ Формат:\n/addpromo КОД СУММА ЛИМИТ\n/addpromo КОД unit ТЕХНИКА КОЛИЧЕСТВО ЛИМИТ\n/addpromo КОД case КЕЙС КОЛИЧЕСТВО ЛИМИТ')
+    if len(p)==4 and p[2].isdigit() and p[3].isdigit(): code=p[1].upper(); reward_type='money'; amount=int(p[2]); maxuses=int(p[3])
+    elif len(p)==6 and p[2].lower()=='unit' and p[4].isdigit() and p[5].isdigit(): code=p[1].upper(); reward_type='unit:'+p[3].lower(); amount=int(p[4]); maxuses=int(p[5])
+    elif len(p)==6 and p[2].lower()=='case' and p[4].isdigit() and p[5].isdigit(): code=p[1].upper(); reward_type='case:'+p[3].lower(); amount=int(p[4]); maxuses=int(p[5])
+    else: return await m.answer('❌ Формат:\n/addpromo КОД СУММА ЛИМИТ\n/addpromo КОД unit ТЕХНИКА КОЛИЧЕСТВО ЛИМИТ\n/addpromo КОД case КЕЙС КОЛИЧЕСТВО ЛИМИТ')
     if amount<=0 or maxuses<=0:return await m.answer('❌ Сумма/количество и лимит должны быть больше 0.')
     if reward_type.startswith('unit:') and reward_type.split(':',1)[1] not in UNITS:return await m.answer('❌ Неизвестная техника.')
     if reward_type.startswith('case:') and reward_type.split(':',1)[1] not in ('case1','case2','donate_case'):return await m.answer('❌ Кейс: case1, case2 или donate_case.')
     db=await connect();await db.execute('INSERT OR REPLACE INTO promos(code,amount,uses,max_uses,reward_type,reward_amount) VALUES(?,?,?,?,?,?)',(code,amount,0,maxuses,reward_type,amount));await db.commit();await db.close()
     return await m.answer(f'✅ Промокод {code} создан: {reward_type} × {amount} · лимит {maxuses}.')
-
-async def _save_promo_state(m,state):
-    bot.STATE[m.from_user.id]=state
-    prompts={
-        'money_code':'🎟 СОЗДАНИЕ • ДЕНЬГИ\n\nВведите код промокода:',
-        'money_amount':'💰 Введите сумму награды:',
-        'money_limit':'🔢 Введите максимальное количество активаций:',
-        'unit_code':'🎖 СОЗДАНИЕ • ТЕХНИКА\n\nВведите код промокода:',
-        'unit_amount':'🔢 Введите количество техники:',
-        'unit_limit':'📊 Введите максимальное количество активаций:',
-        'case_code':'📦 СОЗДАНИЕ • КЕЙС\n\nВведите код промокода:',
-        'case_amount':'🔢 Введите количество кейсов:',
-        'case_limit':'📊 Введите максимальное количество активаций:'
-    }
-    return await m.answer(prompts[state[0]])
 
 async def text_handler(m,tg):
     text=(m.text or '').strip();p=text.split();cmd=p[0].split('@')[0].lower() if p else ''
@@ -141,40 +127,26 @@ async def text_handler(m,tg):
     st=bot.STATE.get(m.from_user.id)
     if st and await bot.admin(m.from_user.id):
         kind=st[0]
-        if kind=='promo_money_code':
-            bot.STATE[m.from_user.id]=('promo_money_amount',text);return await m.answer('💰 Введите сумму награды:')
-        if kind=='promo_money_amount' and text.isdigit() and int(text)>0:
-            bot.STATE[m.from_user.id]=('promo_money_limit',st[1],int(text));return await m.answer('🔢 Введите максимальное количество активаций:')
-        if kind=='promo_money_limit' and text.isdigit() and int(text)>0:
-            code,amount=st[1],st[2];bot.STATE.pop(m.from_user.id,None);return await _create_promo(m,['/addpromo',code,str(amount),text])
-        if kind=='promo_unit_code':
-            bot.STATE[m.from_user.id]=('promo_unit_amount',st[1],text.upper());return await m.answer('🔢 Введите количество техники:')
-        if kind=='promo_unit_amount' and text.isdigit() and int(text)>0:
-            bot.STATE[m.from_user.id]=('promo_unit_limit',st[1],st[2],int(text));return await m.answer('📊 Введите максимальное количество активаций:')
-        if kind=='promo_unit_limit' and text.isdigit() and int(text)>0:
-            unit,code,amount=st[1],st[2],st[3];bot.STATE.pop(m.from_user.id,None);return await _create_promo(m,['/addpromo',code,'unit',unit,str(amount),text])
-        if kind=='promo_case_code':
-            bot.STATE[m.from_user.id]=('promo_case_amount',st[1],text.upper());return await m.answer('🔢 Введите количество кейсов:')
-        if kind=='promo_case_amount' and text.isdigit() and int(text)>0:
-            bot.STATE[m.from_user.id]=('promo_case_limit',st[1],st[2],int(text));return await m.answer('📊 Введите максимальное количество активаций:')
-        if kind=='promo_case_limit' and text.isdigit() and int(text)>0:
-            case,code,amount=st[1],st[2],st[3];bot.STATE.pop(m.from_user.id,None);return await _create_promo(m,['/addpromo',code,'case',case,str(amount),text])
+        if kind=='promo_money_code': bot.STATE[m.from_user.id]=('promo_money_amount',text);return await m.answer('💰 Введите сумму награды:')
+        if kind=='promo_money_amount' and text.isdigit() and int(text)>0: bot.STATE[m.from_user.id]=('promo_money_limit',st[1],int(text));return await m.answer('🔢 Введите максимальное количество активаций:')
+        if kind=='promo_money_limit' and text.isdigit() and int(text)>0: code,amount=st[1],st[2];bot.STATE.pop(m.from_user.id,None);return await _create_promo(m,['/addpromo',code,str(amount),text])
+        if kind=='promo_unit_code': bot.STATE[m.from_user.id]=('promo_unit_amount',st[1],text.upper());return await m.answer('🔢 Введите количество техники:')
+        if kind=='promo_unit_amount' and text.isdigit() and int(text)>0: bot.STATE[m.from_user.id]=('promo_unit_limit',st[1],st[2],int(text));return await m.answer('📊 Введите максимальное количество активаций:')
+        if kind=='promo_unit_limit' and text.isdigit() and int(text)>0: unit,code,amount=st[1],st[2],st[3];bot.STATE.pop(m.from_user.id,None);return await _create_promo(m,['/addpromo',code,'unit',unit,str(amount),text])
+        if kind=='promo_case_code': bot.STATE[m.from_user.id]=('promo_case_amount',st[1],text.upper());return await m.answer('🔢 Введите количество кейсов:')
+        if kind=='promo_case_amount' and text.isdigit() and int(text)>0: bot.STATE[m.from_user.id]=('promo_case_limit',st[1],st[2],int(text));return await m.answer('📊 Введите максимальное количество активаций:')
+        if kind=='promo_case_limit' and text.isdigit() and int(text)>0: case,code,amount=st[1],st[2],st[3];bot.STATE.pop(m.from_user.id,None);return await _create_promo(m,['/addpromo',code,'case',case,str(amount),text])
         if kind=='promo_delete_code':
             code=text.upper();bot.STATE.pop(m.from_user.id,None);db=await connect();cur=await db.execute('DELETE FROM promos WHERE code=?',(code,));await db.commit();await db.close();return await m.answer('✅ Промокод удалён.' if cur.rowcount else '❌ Промокод не найден.')
-        if kind=='editmsg' and await bot.admin(m.from_user.id):
-            key=st[1];await set_setting('msg_'+key,text);bot.STATE.pop(m.from_user.id,None);return await m.answer('✅ Текст сохранён.')
+        if kind=='editmsg' and await bot.admin(m.from_user.id): key=st[1];await set_setting('msg_'+key,text);bot.STATE.pop(m.from_user.id,None);return await m.answer('✅ Текст сохранён.')
     return await bot._base_text_handler(m,tg)
 
 async def callback(c,tg):
     d=c.data or ''
-    if d=='promo_create' and await bot.admin(c.from_user.id):
-        return await bot.safe(c,'➕ СОЗДАНИЕ ПРОМОКОДА\n\nВыберите тип награды:',K([
-            [('💰 Деньги','promo_type:money')],[('🎖 Техника','promo_type:unit')],[('📦 Кейс','promo_type:case')],[('⬅️ Назад','a_promos')]
-        ]))
-    if d=='promo_type:money' and await bot.admin(c.from_user.id):
-        bot.STATE[c.from_user.id]=('promo_money_code',);return await bot.safe(c,'💰 СОЗДАНИЕ • ДЕНЬГИ\n\nВведите код промокода:',B('promo_create'))
+    if d=='promo_create' and await bot.admin(c.from_user.id): return await bot.safe(c,'➕ СОЗДАНИЕ ПРОМОКОДА\n\nВыберите тип награды:',K([[('💰 Деньги','promo_type:money')],[('🎖 Техника','promo_type:unit')],[('📦 Кейс','promo_type:case')],[('⬅️ Назад','a_promos')]]))
+    if d=='promo_type:money' and await bot.admin(c.from_user.id): bot.STATE[c.from_user.id]=('promo_money_code',);return await bot.safe(c,'💰 СОЗДАНИЕ • ДЕНЬГИ\n\nВведите код промокода:',B('promo_create'))
     if d=='promo_type:unit' and await bot.admin(c.from_user.id):
-        rows=[[ (a,f'promo_unit:{b}') ] for a,b in UNIT_BUTTONS];rows.append([('⬅️ Назад','promo_create')]);return await bot.safe(c,'🎖 СОЗДАНИЕ • ТЕХНИКА\n\nВыберите технику:',K(rows))
+        rows=[[(a,f'promo_unit:{b}')] for a,b in UNIT_BUTTONS];rows.append([('⬅️ Назад','promo_create')]);return await bot.safe(c,'🎖 СОЗДАНИЕ • ТЕХНИКА\n\nВыберите технику:',K(rows))
     if d.startswith('promo_unit:') and await bot.admin(c.from_user.id):
         unit=d.split(':',1)[1];bot.STATE[c.from_user.id]=('promo_unit_code',unit);return await bot.safe(c,f'🎖 {UNITS.get(unit,{}).get("title",unit)}\n\nВведите код промокода:',B('promo_type:unit'))
     if d=='promo_type:case' and await bot.admin(c.from_user.id):
