@@ -6,6 +6,8 @@ runs before polling so a stale/broken combat engine cannot silently start.
 import asyncio
 
 from battle_sanity import check_combat_engine
+# Load UI fixes before fix.py imports/starts the authoritative runtime.
+import top_ui_patch
 from fix import main
 
 
