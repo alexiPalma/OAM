@@ -28,7 +28,6 @@ def army_text(u): return '\n'.join(f'{UNITS[k]["title"]}: {int(u[k])}' for k in 
 def clean(text): return re.sub(r'(?i)</?b>|&lt;/?b&gt;','',str(text or ''))
 
 def kill_stats(kills):
-    # В результате всегда перечисляется каждый тип техники, включая нули.
     return '\n'.join(f'{UNITS[key]["title"]}: {int(kills.get(key,0))}' for key in UNITS)
 
 async def show(c,text,markup=None):
@@ -104,22 +103,29 @@ async def confirm(c):
     lines=(actual+fallback)[:15]
     while len(lines)<15:lines.append(fallback[len(lines)%len(fallback)])
 
-    # Атакующий ждёт весь бой. Защитнику показывается ровно 15 кадров.
-    try: await c.message.edit_text('⚔️ БОЙ\n\n⏳ Ждём противника...')
+    # После принятия боя ОБА игрока одновременно получают одну и ту же анимацию.
+    try: await c.message.edit_text('⚔️ БОЙ\n\n🛰 Стороны готовят армии...')
     except Exception: pass
     try: await c.answer()
     except Exception: pass
+
     opp_msg=None
     try:
         attacker_name='@'+me['username'] if me['username'] else f'ID {c.from_user.id}'
-        opp_msg=await c.bot.send_message(uid,f'⚔️ НА ВАС НАПАЛИ\n\n👤 Атакующий: {attacker_name}\n\n🛰 Стороны готовят армии...')
+        opp_msg=await c.bot.send_message(uid,'⚔️ БОЙ\n\n🛰 Стороны готовят армии...')
     except Exception: pass
 
-    if opp_msg:
-        await animate_one(opp_msg,lines,'⚔️ БОЙ\n\n')
-    else:
-        # Даже если отправка защитнику не удалась, итог не показываем раньше 15 секунд.
-        await asyncio.sleep(15)
+    # Важный момент: не запускаем две независимые задачи с разным стартом.
+    # Сначала создаём сообщение защитника, затем оба обновляемся в одном общем цикле.
+    # Это гарантирует одинаковый порядок кадров и отсутствие отдельного ожидания у атакующего.
+    for line in lines:
+        text=clean('⚔️ БОЙ\n\n'+line)
+        try: await c.message.edit_text(text)
+        except Exception: pass
+        if opp_msg:
+            try: await opp_msg.edit_text(text)
+            except Exception: pass
+        await asyncio.sleep(1)
 
     surviving_winner=a_after if winner=='attacker' else d_after
     loser_source=d_after if winner=='attacker' else a_after
