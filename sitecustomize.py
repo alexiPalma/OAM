@@ -1,18 +1,28 @@
 """WorldWarDynasty final runtime bootstrap.
 
-Loaded by Python before the launcher. The battle patch is imported immediately
-so dispatcher handlers see the patched battle_accept/battle_confirm functions.
+Loaded by Python before the launcher. Battle handlers are patched at import
+ time, before working_launcher registers its callback observer.
 """
 import asyncio
 import functools
 import sys
 
-# CRITICAL: import at module-load time, not inside asyncio.run().
-# Dispatcher handlers can capture function objects during launcher startup.
+# IMPORTANT: this is deliberately done at Python startup. The launcher later
+# registers callback handlers, so changing functions only from asyncio.run()
+# is too late for some launcher variants.
 try:
     import battle_rules_patch
 except Exception as exc:
     print(f'[WorldWarDynasty] battle patch import warning: {exc}')
+
+try:
+    import bot as _app
+    import battle_force_sync as _force_battle
+    _app.battle_confirm = _force_battle.confirm
+    _app.battle_accept = _force_battle.accept
+    print('[WorldWarDynasty] direct battle sync installed')
+except Exception as exc:
+    print(f'[WorldWarDynasty] direct battle sync warning: {exc}')
 
 _ORIGINAL_ASYNCIO_RUN = asyncio.run
 
@@ -26,7 +36,13 @@ def _finalize():
         if main is None:
             return
 
-        battle_rules_patch.install(app)
+        # Keep the direct battle handler authoritative. The older patch remains
+        # available for compatibility, but must not replace the force handler.
+        if '_force_battle' in globals():
+            app.battle_confirm = _force_battle.confirm
+            app.battle_accept = _force_battle.accept
+        else:
+            battle_rules_patch.install(app)
 
         if not hasattr(main, 'case') and hasattr(app, 'case'):
             main.case = app.case
