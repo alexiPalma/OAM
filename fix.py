@@ -1,9 +1,11 @@
 """OAM FIX - single battle entrypoint.
 
-Battle invitations are stored in SQLite, so they survive a process restart.
-Both players use the same battle clock and receive every animation frame.
+This is the only runtime entrypoint for the patched battle flow.
+Both players share one 15-second clock, every frame is written to both
+messages, and the result is written only after the final frame.
 """
 import asyncio
+import inspect
 from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher, F
@@ -215,13 +217,17 @@ async def battle_accept(c, attacker_id, bot: Bot):
         pass
 
     async def frame(text):
+        # The two edits are awaited together. Neither side can advance its
+        # animation independently of the other side.
         await asyncio.gather(
             edit_existing(bot, attacker_chat, attacker_msg, text),
             edit_existing(bot, defender_chat, defender_msg, text),
             return_exceptions=True,
         )
 
-    # Exactly one shared 15-second clock. Both messages receive every frame.
+    # One monotonic clock controls both players. The first frame is shown at
+    # the same moment for both, then each next frame is scheduled against the
+    # same absolute deadline. This avoids drift from Telegram API latency.
     start = asyncio.get_running_loop().time()
     for index, second in enumerate(range(15, 0, -1)):
         await frame(f'⚔️ БОЙ\n\n{BATTLE_LINES[index]}\n\n⏱ {second} сек.')
@@ -230,6 +236,7 @@ async def battle_accept(c, attacker_id, bot: Bot):
         if delay > 0:
             await asyncio.sleep(delay)
 
+    # No result is calculated or displayed before the last animation frame.
     a_after, d_after, winner, events, kills_a, kills_d = resolve(attacker, defender, with_kills=True)
     winner_id = attacker_id if winner == 'attacker' else defender_id
     loser_id = defender_id if winner == 'attacker' else attacker_id
@@ -255,8 +262,14 @@ async def battle_accept(c, attacker_id, bot: Bot):
             f'UPDATE users SET {sets},attacks_lost=attacks_lost+1,last_attack=? WHERE user_id=?',
             [loser_arm[k] for k in UNITS] + [now_iso(), loser_id],
         )
-        await db.execute(f'UPDATE users SET {kill_sets} WHERE user_id=?', [int(winner_kills.get(k, 0)) for k in UNITS] + [winner_id])
-        await db.execute(f'UPDATE users SET {kill_sets} WHERE user_id=?', [int(loser_kills.get(k, 0)) for k in UNITS] + [loser_id])
+        await db.execute(
+            f'UPDATE users SET {kill_sets} WHERE user_id=?',
+            [int(winner_kills.get(k, 0)) for k in UNITS] + [winner_id],
+        )
+        await db.execute(
+            f'UPDATE users SET {kill_sets} WHERE user_id=?',
+            [int(loser_kills.get(k, 0)) for k in UNITS] + [loser_id],
+        )
         await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (reward, winner_id))
         await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (loser_reward, loser_id))
         await db.commit()
@@ -275,11 +288,30 @@ async def battle_accept(c, attacker_id, bot: Bot):
         '📉 Твоя армия: −20%\n' f'💵 Компенсация: ${money(loser_reward)}\n\n'
         f'🎯 Уничтожено:\n{kills_text(loser_kills)}'
     )
+
+    # Both final messages are also updated together. The attacker therefore
+    # cannot receive "you lost" before the defender has finished the battle.
     await asyncio.gather(
         edit_existing(bot, attacker_chat, attacker_msg, win_text if winner_id == attacker_id else loss_text, app.back()),
         edit_existing(bot, defender_chat, defender_msg, win_text if winner_id == defender_id else loss_text, app.back()),
         return_exceptions=True,
     )
+
+
+async def _call_with_bot(handler, event, bot):
+    """Call legacy handlers safely regardless of whether they name the bot
+    argument `bot` or `tg_bot`.
+    """
+    params = inspect.signature(handler).parameters
+    if 'tg_bot' in params:
+        result = handler(event, tg_bot=bot)
+    elif 'bot' in params:
+        result = handler(event, bot=bot)
+    else:
+        result = handler(event)
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 async def callback(c, bot: Bot):
@@ -298,7 +330,15 @@ async def callback(c, bot: Bot):
             return await c.answer('Некорректное приглашение.', show_alert=True)
     if data.startswith('accept:') or data.startswith('decline:'):
         return await c.answer('Это старое приглашение. Создайте новый бой.', show_alert=True)
-    return await run.callback(c, bot)
+    return await _call_with_bot(run.callback, c, bot)
+
+
+async def start_wrapper(message, bot: Bot):
+    return await _call_with_bot(run.start_wrapper, message, bot)
+
+
+async def text_handler(message, bot: Bot):
+    return await _call_with_bot(run.text_handler, message, bot)
 
 
 async def main():
@@ -325,14 +365,15 @@ async def main():
 
     bot = Bot(BOT_TOKEN)
     dp = Dispatcher()
-    dp.message.register(run.start_wrapper, CommandStart())
-    dp.message.register(run.text_handler, F.text)
+    dp.message.register(start_wrapper, CommandStart())
+    dp.message.register(text_handler, F.text)
     dp.callback_query.register(callback, F.data)
 
     print('[OAM FIX] STARTED: fix.py')
     print('[OAM FIX] SQLite battle invites: ON')
     print('[OAM FIX] shared 15-second animation: ON')
     print('[OAM FIX] all kill counters: ON')
+    print('[OAM FIX] tg_bot compatibility adapter: ON')
     await dp.start_polling(bot)
 
 
