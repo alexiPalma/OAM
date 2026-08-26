@@ -1,14 +1,14 @@
 """OAM master launcher.
 
-The runtime patches must be loaded before fix.py so admin UI, keyword
-navigation, promo UI, callback compatibility, direct commands and the battle
-runtime all use the intended handlers.
+The runtime patches are loaded in the same order as the authoritative
+fix.py dispatcher. Callback safety is installed AFTER fix.py is imported so
+it wraps the exact callback function that the dispatcher will register.
 """
 import asyncio
 
 from battle_sanity import check_combat_engine
 
-# Admin/promo/keyword patches are loaded before the authoritative runtime.
+# Patches that must exist before fix.py creates its runtime wrappers.
 import admin_runtime
 import top_ui_patch
 import keyword_runtime_patch
@@ -18,8 +18,8 @@ import callback_compat_patch
 
 from fix import main
 
-# Direct /атаковать @username support patches fix.text_handler after fix is
-# loaded and before fix.main registers the dispatcher handler.
+# Patches that wrap the authoritative fix.py handlers.
+import callback_guard
 import attack_command_patch
 
 
@@ -31,6 +31,7 @@ if __name__ == "__main__":
     print("[OAM] TWO-STEP PROMO INPUT: OK")
     print("[OAM] KEYWORD NAVIGATION: OK")
     print("[OAM] CALLBACK COMPATIBILITY: OK")
+    print("[OAM] CALLBACK GUARD: OK")
     print("[OAM] DIRECT ATTACK COMMAND: OK")
     print("[OAM] AUTHORITATIVE RUNTIME: fix.py")
     asyncio.run(main())
