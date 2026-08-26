@@ -77,91 +77,16 @@ async def animate_one(message,lines,prefix=''):
         await asyncio.sleep(1)
 
 async def confirm(c):
+    # IMPORTANT: this function is kept as a fallback only. The active callback
+    # below delegates battle_confirm to bot.battle_confirm, which is patched by
+    # battle_rules_patch and records the attacker's exact message ID. Previously
+    # this local confirm() bypassed that patch, so the attacker never received
+    # the synchronized animation.
     uid=PENDING.get(c.from_user.id)
     if not uid:return await c.answer('Сначала выберите противника.',show_alert=True)
     me=await user(c.from_user.id);opp=await user(uid)
-    if not opp:
-        PENDING.pop(c.from_user.id,None)
-        return await c.answer('Игрок недоступен.',show_alert=True)
-    if cooldown_seconds(me):return await c.answer('Ваше КД ещё не закончилось.',show_alert=True)
-    if cooldown_seconds(opp):
-        PENDING.pop(c.from_user.id,None)
-        return await c.answer('Противник уже недоступен.',show_alert=True)
-    PENDING.pop(c.from_user.id,None)
-
-    a_after,d_after,winner,events,kills_a,kills_d=resolve(me,opp,with_kills=True)
-    actual=[]
-    for e in events:
-        e=clean(e).replace('🔴 ','').replace('🔵 ','')
-        if e:actual.append('💥 '+e)
-    fallback=[
-        '🛰 Разведка обнаружила позиции противника','🛩 БПЛА вышли на боевой курс','🎯 Перехватчики подняты в воздух',
-        '🚀 Ракетный удар нанесён','🪖 Пехота вступила в бой','🚙 БМП открыли огонь','🛡 Танки продвигаются вперёд',
-        '🚁 Вертолёты атакуют','✈️ Самолёты наносят удар','💥 Передовая линия столкнулась','🎯 Перехватчик сбит',
-        '🛩 БПЛА уничтожен','🚙 БМП подбита','🛡 Танковая техника уничтожена','⏳ Последние секунды боя...'
-    ]
-    lines=(actual+fallback)[:15]
-    while len(lines)<15:lines.append(fallback[len(lines)%len(fallback)])
-
-    # После принятия боя ОБА игрока одновременно получают одну и ту же анимацию.
-    try: await c.message.edit_text('⚔️ БОЙ\n\n🛰 Стороны готовят армии...')
-    except Exception: pass
-    try: await c.answer()
-    except Exception: pass
-
-    opp_msg=None
-    try:
-        attacker_name='@'+me['username'] if me['username'] else f'ID {c.from_user.id}'
-        opp_msg=await c.bot.send_message(uid,'⚔️ БОЙ\n\n🛰 Стороны готовят армии...')
-    except Exception: pass
-
-    # Важный момент: не запускаем две независимые задачи с разным стартом.
-    # Сначала создаём сообщение защитника, затем оба обновляемся в одном общем цикле.
-    # Это гарантирует одинаковый порядок кадров и отсутствие отдельного ожидания у атакующего.
-    for line in lines:
-        text=clean('⚔️ БОЙ\n\n'+line)
-        try: await c.message.edit_text(text)
-        except Exception: pass
-        if opp_msg:
-            try: await opp_msg.edit_text(text)
-            except Exception: pass
-        await asyncio.sleep(1)
-
-    surviving_winner=a_after if winner=='attacker' else d_after
-    loser_source=d_after if winner=='attacker' else a_after
-    loser_id=uid if winner=='attacker' else c.from_user.id
-    winner_id=c.from_user.id if winner=='attacker' else uid
-    loser_before=opp if winner=='attacker' else me
-    loser_after={k:max(0,int(loser_source[k])*80//100) for k in UNITS}
-    winner_kills=kills_a if winner=='attacker' else kills_d
-    loser_kills=kills_d if winner=='attacker' else kills_a
-    winner_reward=int(sum(winner_kills[k]*UNITS[k]['price'] for k in UNITS)*0.05)
-    loser_reward=int(sum((int(loser_before[k])-loser_after[k])*UNITS[k]['price'] for k in UNITS)*0.02)
-
-    db=await connect();sets=', '.join(f'{k}=?' for k in UNITS)
-    await db.execute(f'UPDATE users SET {sets},attacks_won=attacks_won+1,last_attack=? WHERE user_id=?',[int(surviving_winner[k]) for k in UNITS]+[now().isoformat(),winner_id])
-    await db.execute(f'UPDATE users SET {sets},attacks_lost=attacks_lost+1,last_attack=? WHERE user_id=?',[loser_after[k] for k in UNITS]+[now().isoformat(),loser_id])
-    ksets=', '.join(f'kill_{k}=kill_{k}+?' for k in UNITS)
-    await db.execute(f'UPDATE users SET {ksets} WHERE user_id=?',[winner_kills[k] for k in UNITS]+[winner_id])
-    await db.execute(f'UPDATE users SET {ksets} WHERE user_id=?',[loser_kills[k] for k in UNITS]+[loser_id])
-    await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?',(winner_reward,winner_id))
-    await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?',(loser_reward,loser_id))
-    report='\n'.join(actual[-30:]) if actual else 'Бой завершён.'
-    await db.execute('INSERT INTO battle_log(attacker,defender,winner,report,created_at) VALUES(?,?,?,?,?)',(c.from_user.id,uid,winner_id,report,now().isoformat()))
-    await db.commit();await db.close()
-
-    winner_stats=kill_stats(winner_kills);loser_stats=kill_stats(loser_kills)
-    if winner=='attacker':
-        result=f'🏆 WIN\n\nТы победил!\n\n💰 +${money(winner_reward)}\n📉 Армия противника: −20%\n💵 Проигравшему: +${money(loser_reward)}\n\n💥 УНИЧТОЖЕНО ТОБОЙ:\n{winner_stats}'
-        defender_result=f'💀 LOSS\n\nНа тебя напали. Ты проиграл.\n\n📉 Твоя армия: −20%\n💰 Компенсация: +${money(loser_reward)}\n\n💥 УНИЧТОЖЕНО ТОБОЙ:\n{loser_stats}'
-    else:
-        result=f'💀 LOSS\n\nТы проиграл.\n\n📉 Твоя армия: −20%\n💰 Компенсация: +${money(loser_reward)}\n\n💥 УНИЧТОЖЕНО ТОБОЙ:\n{winner_stats}'
-        defender_result=f'🏆 WIN\n\nТы победил нападающего!\n\n💰 +${money(winner_reward)}\n📉 Армия противника: −20%\n\n💥 УНИЧТОЖЕНО ТОБОЙ:\n{loser_stats}'
-    try: await c.message.edit_text(clean(result),reply_markup=kb([[('⬅️ Назад','home')]]))
-    except Exception: pass
-    if opp_msg:
-        try: await opp_msg.edit_text(clean(defender_result),reply_markup=kb([[('⬅️ В меню','home')]]))
-        except Exception: pass
+    if not opp:return await c.answer('Игрок недоступен.',show_alert=True)
+    return await c.answer('Бой обрабатывается активным battle_rules_patch.',show_alert=True)
 
 def install(bot_module):
     original_callback=bot_module.callback
@@ -170,7 +95,12 @@ def install(bot_module):
         if d=='attack':return await attack_menu(c,0)
         if d.startswith('attack_page:'):return await attack_menu(c,int(d.split(':',1)[1]))
         if d.startswith('opp:'):return await opponent(c,int(d.split(':',1)[1]))
-        if d=='battle_confirm':return await confirm(c)
+        if d=='battle_confirm':
+            # Do NOT call the local confirm(). The real synchronized handler is
+            # bot_module.battle_confirm, installed by battle_rules_patch. This
+            # is the critical fix: the previous runtime wrapper intercepted the
+            # callback and completely bypassed the synchronized implementation.
+            return await bot_module.battle_confirm(c,bot)
         return await original_callback(c,bot)
     bot_module.callback=wrapped_callback
     async def clean_bonus(c):
