@@ -1,13 +1,10 @@
 """Direct attack command support.
 
-Adds: /атаковать @username, атаковать @username, /attack @username.
-Works from a private bot chat or from a group. The existing battle engine and
-15-second synchronized result flow remain untouched; this only creates the
-same pending invite that the normal attack buttons create.
+Supports `/атаковать @username`, `атаковать @username`, and `/attack @username`
+from both private chats and groups.
 """
 
 from db import connect, user
-from config import UNITS
 import fix
 
 
@@ -30,7 +27,10 @@ async def _create_attack(message, bot, username):
     attacker_id = int(message.from_user.id)
     target = await _find_by_username(username)
     if not target:
-        return await message.answer('❌ Игрок с таким юзернеймом не найден.')
+        return await message.answer(
+            '❌ Игрок с таким юзернеймом не найден.\n'
+            'Он должен хотя бы один раз открыть бота через /start.'
+        )
 
     defender_id = int(target['user_id'])
     if defender_id == attacker_id:
@@ -39,31 +39,26 @@ async def _create_attack(message, bot, username):
     attacker = await user(attacker_id)
     if not attacker:
         return await message.answer('❌ Сначала открой бота через /start.')
-    if fix._cd(attacker):
-        left = fix._cd(attacker)
+
+    # Use the same cooldown/army helpers as the existing bot runtime.
+    left = int(fix.app.cd_seconds(attacker))
+    if left > 0:
         return await message.answer(
             f'⏳ До следующей атаки: {left // 60:02d}:{left % 60:02d}'
         )
-    if fix._cd(target):
+    if int(fix.app.cd_seconds(target)) > 0:
         return await message.answer('❌ Этот игрок сейчас недоступен для атаки.')
-    if fix.army_size(attacker) <= 0:
+    if fix.app.army_size(attacker) <= 0:
         return await message.answer('❌ У тебя нет армии для атаки.')
-    if fix.army_size(target) <= 0:
+    if fix.app.army_size(target) <= 0:
         return await message.answer('❌ У этого игрока нет армии.')
 
-    # Do not create a second live invite for the same attacker.
     existing = await fix.get_invite(attacker_id, defender_id)
     if existing and int(existing[7]) == 0:
         return await message.answer('⏳ У тебя уже есть ожидающий запрос на бой.')
 
-    attacker_name = (
-        '@' + attacker['username'] if attacker['username']
-        else f'ID {attacker_id}'
-    )
-    target_name = (
-        '@' + target['username'] if target['username']
-        else f'ID {defender_id}'
-    )
+    attacker_name = '@' + attacker['username'] if attacker['username'] else f'ID {attacker_id}'
+    target_name = '@' + target['username'] if target['username'] else f'ID {defender_id}'
     invite_text = (
         '⚔️ WORLDWAR DYNASTY • НА ВАС НАПАЛИ\n\n'
         f'👤 Нападающий: {attacker_name}\n\n'
@@ -116,10 +111,7 @@ async def patched_text_handler(message, bot):
     parts = text.split()
     command = parts[0].split('@')[0].lower() if parts else ''
 
-    if command in ('/атаковать', '/attack') and len(parts) >= 2:
-        return await _create_attack(message, bot, parts[1])
-
-    if command == 'атаковать' and len(parts) >= 2:
+    if command in ('/атаковать', '/attack', 'атаковать') and len(parts) >= 2:
         return await _create_attack(message, bot, parts[1])
 
     return await _original_text_handler(message, bot)
