@@ -1,9 +1,7 @@
 """OAM FIX - single battle entrypoint.
 
-This file deliberately owns the battle callback path. Invitations are stored in
-SQLite instead of a Python dict, so a restart does not turn a freshly sent
-invitation into an invalid one. Both battle messages are edited from the same
-15-second loop and the result is sent only after that loop finishes.
+Battle invitations are stored in SQLite, so they survive a process restart.
+Both players use the same battle clock and receive every animation frame.
 """
 import asyncio
 from datetime import datetime, timezone
@@ -20,21 +18,12 @@ from settings import init_settings
 from combat import resolve
 
 BATTLE_LINES = [
-    '⚔️ Идёт бой',
-    '💥 Гремят взрывы',
-    '🪖 Пехота зачищает позиции',
-    '🔥 Раздаются выстрелы',
-    '🌫 Над полем боя поднимается дым',
-    '⚡ Ударная волна проходит по позиции',
-    '🚙 БМП открыли огонь',
-    '💥 Артиллерия работает',
-    '🛡 Танки продвигаются вперёд',
-    '🚁 Вертолёты атакуют',
-    '✈️ Самолёты наносят удар',
-    '🚀 Ракетный удар',
-    '🛰 Последняя атака',
-    '⏳ Последние секунды боя',
-    '🏆 Бой завершён',
+    '⚔️ Идёт бой', '💥 Гремят взрывы', '🪖 Пехота зачищает позиции',
+    '🔥 Раздаются выстрелы', '🌫 Над полем боя поднимается дым',
+    '⚡ Ударная волна проходит по позиции', '🚙 БМП открыли огонь',
+    '💥 Артиллерия работает', '🛡 Танки продвигаются вперёд',
+    '🚁 Вертолёты атакуют', '✈️ Самолёты наносят удар', '🚀 Ракетный удар',
+    '🛰 Последняя атака', '⏳ Последние секунды боя', '🏆 Бой завершён',
 ]
 
 
@@ -56,36 +45,31 @@ def kills_text(kills):
 async def ensure_battle_table():
     db = await connect()
     try:
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS oam_battle_invites (
-                attacker_id INTEGER PRIMARY KEY,
-                defender_id INTEGER NOT NULL,
-                attacker_chat_id INTEGER NOT NULL,
-                attacker_message_id INTEGER NOT NULL,
-                defender_chat_id INTEGER NOT NULL,
-                defender_message_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                running INTEGER NOT NULL DEFAULT 0
-            )
-        ''')
+        await db.execute('''CREATE TABLE IF NOT EXISTS oam_battle_invites (
+            attacker_id INTEGER PRIMARY KEY,
+            defender_id INTEGER NOT NULL,
+            attacker_chat_id INTEGER NOT NULL,
+            attacker_message_id INTEGER NOT NULL,
+            defender_chat_id INTEGER NOT NULL,
+            defender_message_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            running INTEGER NOT NULL DEFAULT 0
+        )''')
         await db.commit()
     finally:
         await db.close()
 
 
-async def get_invite(attacker_id, defender_id, include_running=True):
+async def get_invite(attacker_id, defender_id):
     db = await connect()
     try:
         cur = await db.execute(
-            '''SELECT attacker_id, defender_id, attacker_chat_id,
-                      attacker_message_id, defender_chat_id, defender_message_id,
-                      created_at, running
-               FROM oam_battle_invites
-               WHERE attacker_id=? AND defender_id=?''',
+            '''SELECT attacker_id, defender_id, attacker_chat_id, attacker_message_id,
+                      defender_chat_id, defender_message_id, created_at, running
+               FROM oam_battle_invites WHERE attacker_id=? AND defender_id=?''',
             (int(attacker_id), int(defender_id)),
         )
-        row = await cur.fetchone()
-        return row
+        return await cur.fetchone()
     finally:
         await db.close()
 
@@ -100,7 +84,6 @@ async def delete_invite(attacker_id):
 
 
 async def reserve_invite(attacker_id, defender_id):
-    """Atomically reserve one invitation. Returns the row or None."""
     db = await connect()
     try:
         cur = await db.execute(
@@ -112,11 +95,9 @@ async def reserve_invite(attacker_id, defender_id):
         if cur.rowcount != 1:
             return None
         cur = await db.execute(
-            '''SELECT attacker_id, defender_id, attacker_chat_id,
-                      attacker_message_id, defender_chat_id, defender_message_id,
-                      created_at, running
-               FROM oam_battle_invites
-               WHERE attacker_id=? AND defender_id=?''',
+            '''SELECT attacker_id, defender_id, attacker_chat_id, attacker_message_id,
+                      defender_chat_id, defender_message_id, created_at, running
+               FROM oam_battle_invites WHERE attacker_id=? AND defender_id=?''',
             (int(attacker_id), int(defender_id)),
         )
         return await cur.fetchone()
@@ -127,11 +108,8 @@ async def reserve_invite(attacker_id, defender_id):
 async def edit_existing(bot: Bot, chat_id, message_id, text, markup=None):
     try:
         await bot.edit_message_text(
-            chat_id=int(chat_id),
-            message_id=int(message_id),
-            text=text,
-            reply_markup=markup,
-            parse_mode=None,
+            chat_id=int(chat_id), message_id=int(message_id), text=text,
+            reply_markup=markup, parse_mode=None,
         )
         return True
     except Exception as exc:
@@ -151,17 +129,12 @@ async def battle_confirm(c, bot: Bot):
     if not attacker or not defender:
         app.PENDING.pop(attacker_id, None)
         return await c.answer('Бой сейчас недоступен.', show_alert=True)
-
     app.PENDING.pop(attacker_id, None)
 
     db = await connect()
     try:
-        cur = await db.execute(
-            'SELECT running FROM oam_battle_invites WHERE attacker_id=?',
-            (attacker_id,),
-        )
-        existing = await cur.fetchone()
-        if existing:
+        cur = await db.execute('SELECT running FROM oam_battle_invites WHERE attacker_id=?', (attacker_id,))
+        if await cur.fetchone():
             return await c.answer('⏳ У вас уже есть ожидающий запрос на бой.', show_alert=True)
     finally:
         await db.close()
@@ -169,8 +142,8 @@ async def battle_confirm(c, bot: Bot):
     attacker_name = '@' + attacker['username'] if attacker['username'] else f'ID {attacker_id}'
     text = (
         '⚔️ WORLDWAR DYNASTY • НА ВАС НАПАЛИ\n\n'
-        f'👤 Нападающий: {attacker_name}\n\n'
-        f'{app.army_text(attacker)}\n\nПримите бой или откажитесь.'
+        f'👤 Нападающий: {attacker_name}\n\n{app.army_text(attacker)}\n\n'
+        'Примите бой или откажитесь.'
     )
     keyboard = app.kb([
         [('⚔️ ПРИНЯТЬ БОЙ', f'oam_accept:{attacker_id}')],
@@ -189,23 +162,15 @@ async def battle_confirm(c, bot: Bot):
                (attacker_id, defender_id, attacker_chat_id, attacker_message_id,
                 defender_chat_id, defender_message_id, created_at, running)
                VALUES (?, ?, ?, ?, ?, ?, ?, 0)''',
-            (
-                attacker_id, defender_id,
-                int(c.message.chat.id), int(c.message.message_id),
-                defender_id, int(defender_message.message_id),
-                now_iso(),
-            ),
+            (attacker_id, defender_id, int(c.message.chat.id), int(c.message.message_id),
+             defender_id, int(defender_message.message_id), now_iso()),
         )
         await db.commit()
     finally:
         await db.close()
 
     await c.answer()
-    return await app.safe(
-        c,
-        '⏳ Запрос на бой отправлен противнику. Ожидаем решения...',
-        app.back('attack'),
-    )
+    return await app.safe(c, '⏳ Запрос на бой отправлен противнику. Ожидаем решения...', app.back('attack'))
 
 
 async def battle_decline(c, attacker_id, bot: Bot):
@@ -214,13 +179,11 @@ async def battle_decline(c, attacker_id, bot: Bot):
     invite = await get_invite(attacker_id, defender_id)
     if not invite:
         return await c.answer('Предложение уже недействительно.', show_alert=True)
-
     await delete_invite(attacker_id)
     try:
         await c.answer('Бой отменён.')
     except Exception:
         pass
-
     _, _, attacker_chat, attacker_msg, _, _, _, _ = invite
     try:
         await c.message.edit_text('🏳️ Бой отклонён.', parse_mode=None)
@@ -232,11 +195,8 @@ async def battle_decline(c, attacker_id, bot: Bot):
 async def battle_accept(c, attacker_id, bot: Bot):
     attacker_id = int(attacker_id)
     defender_id = int(c.from_user.id)
-
     invite = await reserve_invite(attacker_id, defender_id)
     if not invite:
-        # If another click already reserved it, give the correct message rather
-        # than pretending that a valid invitation expired.
         existing = await get_invite(attacker_id, defender_id)
         if existing and int(existing[7]) == 1:
             return await c.answer('Бой уже запущен.', show_alert=True)
@@ -255,29 +215,22 @@ async def battle_accept(c, attacker_id, bot: Bot):
         pass
 
     async def frame(text):
-        # One shared frame: both messages are edited in the same await group.
         await asyncio.gather(
             edit_existing(bot, attacker_chat, attacker_msg, text),
             edit_existing(bot, defender_chat, defender_msg, text),
             return_exceptions=True,
         )
 
-    # Both players see the same first frame immediately after acceptance.
-    await frame('⚔️ БОЙ\n\nБой начинается...\n\n⏱ 15 сек.')
-
-    loop = asyncio.get_running_loop()
-    finish_at = loop.time() + 15.0
+    # Exactly one shared 15-second clock. Both messages receive every frame.
+    start = asyncio.get_running_loop().time()
     for index, second in enumerate(range(15, 0, -1)):
         await frame(f'⚔️ БОЙ\n\n{BATTLE_LINES[index]}\n\n⏱ {second} сек.')
-        target = finish_at - (15 - second + 1)
-        delay = target - loop.time()
+        target = start + (index + 1)
+        delay = target - asyncio.get_running_loop().time()
         if delay > 0:
             await asyncio.sleep(delay)
 
-    # Combat is resolved only after the shared animation has ended.
-    a_after, d_after, winner, events, kills_a, kills_d = resolve(
-        attacker, defender, with_kills=True
-    )
+    a_after, d_after, winner, events, kills_a, kills_d = resolve(attacker, defender, with_kills=True)
     winner_id = attacker_id if winner == 'attacker' else defender_id
     loser_id = defender_id if winner == 'attacker' else attacker_id
     winner_arm = a_after if winner == 'attacker' else d_after
@@ -302,38 +255,26 @@ async def battle_accept(c, attacker_id, bot: Bot):
             f'UPDATE users SET {sets},attacks_lost=attacks_lost+1,last_attack=? WHERE user_id=?',
             [loser_arm[k] for k in UNITS] + [now_iso(), loser_id],
         )
-        await db.execute(
-            f'UPDATE users SET {kill_sets} WHERE user_id=?',
-            [int(winner_kills.get(k, 0)) for k in UNITS] + [winner_id],
-        )
-        await db.execute(
-            f'UPDATE users SET {kill_sets} WHERE user_id=?',
-            [int(loser_kills.get(k, 0)) for k in UNITS] + [loser_id],
-        )
+        await db.execute(f'UPDATE users SET {kill_sets} WHERE user_id=?', [int(winner_kills.get(k, 0)) for k in UNITS] + [winner_id])
+        await db.execute(f'UPDATE users SET {kill_sets} WHERE user_id=?', [int(loser_kills.get(k, 0)) for k in UNITS] + [loser_id])
         await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (reward, winner_id))
         await db.execute('UPDATE users SET balance=balance+? WHERE user_id=?', (loser_reward, loser_id))
         await db.commit()
     finally:
         await db.close()
-
     await delete_invite(attacker_id)
 
     winner_row = await user(winner_id)
     winner_name = '@' + winner_row['username'] if winner_row and winner_row['username'] else f'ID {winner_id}'
     win_text = (
-        '🏆 WIN\n\n'
-        f'Победитель: {winner_name}\n'
-        f'💰 Награда: ${money(reward)}\n\n'
-        f'🎯 Уничтожено:\n{kills_text(winner_kills)}'
+        '🏆 WIN\n\n' f'Победитель: {winner_name}\n'
+        f'💰 Награда: ${money(reward)}\n\n🎯 Уничтожено:\n{kills_text(winner_kills)}'
     )
     loss_text = (
-        '💀 LOSS\n\n'
-        f'Победитель: {winner_name}\n'
-        '📉 Твоя армия: −20%\n'
-        f'💵 Компенсация: ${money(loser_reward)}\n\n'
+        '💀 LOSS\n\n' f'Победитель: {winner_name}\n'
+        '📉 Твоя армия: −20%\n' f'💵 Компенсация: ${money(loser_reward)}\n\n'
         f'🎯 Уничтожено:\n{kills_text(loser_kills)}'
     )
-
     await asyncio.gather(
         edit_existing(bot, attacker_chat, attacker_msg, win_text if winner_id == attacker_id else loss_text, app.back()),
         edit_existing(bot, defender_chat, defender_msg, win_text if winner_id == defender_id else loss_text, app.back()),
@@ -342,7 +283,6 @@ async def battle_accept(c, attacker_id, bot: Bot):
 
 
 async def callback(c, bot: Bot):
-    """Aiogram callback router. The bot argument is intentionally named bot."""
     data = c.data or ''
     if data == 'battle_confirm':
         return await battle_confirm(c, bot)
@@ -364,7 +304,6 @@ async def callback(c, bot: Bot):
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError('BOT_TOKEN is empty')
-
     await init_db()
     await ensure_battle_table()
     await init_settings(ADMIN_ID)
@@ -391,15 +330,10 @@ async def main():
     dp.callback_query.register(callback, F.data)
 
     print('[OAM FIX] STARTED: fix.py')
-    print('[OAM FIX] persistent battle invitations enabled')
-    print('[OAM FIX] shared 15-second battle animation enabled')
-    print('[OAM FIX] result is sent only after animation')
-    print('[OAM FIX] every unit kill counter is printed, including zero')
-
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
+    print('[OAM FIX] SQLite battle invites: ON')
+    print('[OAM FIX] shared 15-second animation: ON')
+    print('[OAM FIX] all kill counters: ON')
+    await dp.start_polling(bot)
 
 
 if __name__ == '__main__':
