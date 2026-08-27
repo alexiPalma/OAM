@@ -17,6 +17,7 @@ import promo_bridge
 import promo_command_patch
 import promo_case_patch
 import callback_compat_patch
+import db_connector_patch
 
 from fix import main
 
