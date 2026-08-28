@@ -1,32 +1,31 @@
-"""Make Top Fighters rank by accumulated kills, preserving existing UI."""
-import fix
+"""Make Top Warriors rank by accumulated kills, preserving existing UI."""
+import bot as _app
+from db import connect
 
-try:
-    from db import top_users
-except Exception:
-    top_users = None
+KILL_WEIGHTS = {
+    'soldier': 1, 'interceptor': 1, 'drone': 3, 'bmp': 7,
+    'artillery': 8, 'tank': 10, 'helicopter': 15,
+    'plane': 25, 'missile': 50,
+}
 
-# Keep the existing top_users API/UI shape, but replace the ranking source.
-# kill_* fields are accumulated by the battle logic.
-KILL_FIELDS = (
-    "kill_soldier", "kill_interceptor", "kill_drone", "kill_bmp",
-    "kill_artillery", "kill_tank", "kill_helicopter", "kill_aircraft",
-    "kill_rocket",
-)
-
-async def top_kill_users(limit=50):
-    import db
-    dbconn = await db.connect()
+async def top_users_by_kills(limit=50):
+    db = await connect()
     try:
-        cur = await dbconn.execute("SELECT id, username, " + ",".join(KILL_FIELDS) + " FROM users")
-        rows = await cur.fetchall()
-        def score(row):
-            return sum(int(row[i] or 0) for i in range(2, len(row)))
-        rows.sort(key=score, reverse=True)
-        return [(r[0], r[1], score(r)) for r in rows[:limit]]
+        expr = ' + '.join(
+            f'COALESCE(kill_{unit},0)*{weight}'
+            for unit, weight in KILL_WEIGHTS.items()
+        ) or '0'
+        cur = await db.execute(
+            f'''SELECT user_id, username, balance, farm_level,
+                       {expr} AS army_total
+                FROM users
+                ORDER BY army_total DESC, attacks_won DESC, user_id ASC
+                LIMIT ?''',
+            (max(1, min(50, int(limit))),),
+        )
+        return await cur.fetchall()
     finally:
-        await dbconn.close()
+        await db.close()
 
-# Expose the new source for the existing top UI without changing its markup.
-fix.top_kill_users = top_kill_users
-fix.TOP_KILLS_MODE = True
+_app.top_users = top_users_by_kills
+print('[OAM] TOP WARRIORS: KILLS')
