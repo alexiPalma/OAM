@@ -11,6 +11,7 @@ from battle_sanity import check_combat_engine
 
 # Patches that must exist before fix.py creates its runtime wrappers.
 import admin_runtime
+import top_kills_patch
 import top_ui_patch
 import keyword_runtime_patch
 import promo_bridge
@@ -39,5 +40,6 @@ if __name__ == "__main__":
     print("[OAM] SHOP CALLBACKS: DIRECT")
     print("[OAM] CALLBACK GUARD: OK")
     print("[OAM] DIRECT ATTACK COMMAND: OK")
+    print("[OAM] TOP WARRIORS: KILLS")
     print("[OAM] AUTHORITATIVE RUNTIME: fix.py")
     asyncio.run(main())
